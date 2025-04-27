@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This project aims to create a tool that leverages the Google Gemini API to analyze and modify MIDI files. The initial focus (MVP) is on loading a MIDI file, performing basic analysis, extending it based on user input, and saving the result.
+This project aims to create a tool that leverages the Google Gemini API to help you arrange music: input a simple MIDI melody or chord idea, Gemini will help you expand on this, then saving the result as a MIDI file and importing that into your favorite DAW.
 
 ## MVP Functionality
 
