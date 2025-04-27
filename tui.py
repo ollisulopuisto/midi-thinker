@@ -3,6 +3,7 @@ from prompt_toolkit import prompt
 from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, message_dialog
 from prompt_toolkit.validation import Validator, ValidationError
 from prompt_toolkit.completion import PathCompleter
+import json # Import json for formatting example
 
 class NumberValidator(Validator):
     """Validates that input is a positive integer."""
@@ -134,10 +135,44 @@ def show_success(title, text):
     """Displays a success message dialog."""
     message_dialog(title=title, text=text).run()
 
-def show_analysis_results(title, text):
-    """Displays the analysis results in a message dialog."""
+def show_analysis_results(title: str, analysis_data: dict | None):
+    """
+    Displays the structured analysis results from a dictionary in a message dialog.
+
+    Args:
+        title (str): The title for the dialog window.
+        analysis_data (dict | None): A dictionary containing the analysis results
+                                     (e.g., {"key_signature": "Cmaj", "tempo_bpm": 120, ...})
+                                     or None if analysis failed.
+    """
+    if not analysis_data or not isinstance(analysis_data, dict):
+        display_text = "Analysis data is not available or is in an invalid format."
+    else:
+        # Format the dictionary into a readable string
+        lines = [f"## {title}\n"] # Add title as header
+        # Define the desired order and friendly names for keys
+        display_order = {
+            "key_signature": "Key Signature",
+            "tempo_bpm": "Tempo (BPM)",
+            "time_signature": "Time Signature",
+            "style_genre": "Style/Genre",
+            "harmony_description": "Harmony"
+        }
+        for key, friendly_name in display_order.items():
+            value = analysis_data.get(key, "N/A") # Get value or default to "N/A"
+            lines.append(f"**{friendly_name}:** {value}")
+
+        # Add any extra keys found in the data that weren't in the display_order
+        for key, value in analysis_data.items():
+            if key not in display_order:
+                 # Simple formatting for unexpected keys
+                 friendly_name = key.replace('_', ' ').title()
+                 lines.append(f"**{friendly_name}:** {value}")
+
+        display_text = "\n\n".join(lines) # Join lines with double newline for spacing
+
     # Use message_dialog which handles multi-line text well
-    message_dialog(title=title, text=text).run()
+    message_dialog(title=title, text=display_text).run()
 
 # Example usage (for testing tui.py directly)
 if __name__ == '__main__':
@@ -164,6 +199,26 @@ if __name__ == '__main__':
              print(f"Error: Test input file not found at '{test_input_path}'")
         except Exception as e:
              print(f"Error loading test file: {e}")
+
+        # Example of showing analysis results
+        print("\n--- Testing show_analysis_results ---")
+        sample_analysis_good = {
+            "key_signature": "Amin",
+            "tempo_bpm": 95,
+            "time_signature": "4/4",
+            "style_genre": "Lo-fi Hip Hop",
+            "harmony_description": "Uses minor chords and some borrowed chords.",
+            "unexpected_field": "Some extra info"
+        }
+        print("Showing sample analysis (good data):")
+        show_analysis_results("Sample Analysis", sample_analysis_good)
+
+        print("\nShowing sample analysis (bad data - None):")
+        show_analysis_results("Sample Analysis Failed", None)
+
+        print("\nShowing sample analysis (bad data - list):")
+        show_analysis_results("Sample Analysis Invalid", ["list", "not", "dict"])
+        print("--- End testing show_analysis_results ---")
 
     else:
         print("\nUser cancelled input file selection.")

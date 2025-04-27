@@ -2,11 +2,12 @@ import mido
 import sys
 import json
 import os
-import argparse # Re-add argparse
+import argparse
 import google.generativeai as genai
 from dotenv import load_dotenv
-import re # Added import for cleaning JSON
-from tui import get_user_input, select_input_file, show_error, show_success, show_analysis_results # Import TUI functions including show_analysis_results
+import re
+import hashlib # Added for caching
+from tui import get_user_input, select_input_file, show_error, show_success, show_analysis_results
 
 # Default values if not found in MIDI
 DEFAULT_TEMPO = 500000  # 120 bpm
@@ -116,91 +117,80 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
     # Return JSON and the list of end ticks
     return mvp_representation, track_end_ticks
 
-def call_gemini_for_analysis(mvp_json_data: dict):
-    """
-    (Optional MVP Step 5 - Basic Analysis)
-    Constructs a prompt and calls the Gemini API to analyze tempo and key.
-    """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        # Don't treat as fatal error for optional step, just warn.
-        print("Warning: GEMINI_API_KEY not found. Skipping optional analysis step.", file=sys.stderr)
-        return
+# Cache directory
+CACHE_DIR = ".midi-thinker-cache"
 
+def get_cache_filepath(input_midi_path: str) -> str:
+    """Generates a cache filepath based on the hash of the input MIDI file."""
     try:
-        genai.configure(api_key=api_key)
-        # Use a model suitable for analysis, flash might be sufficient
-        model = genai.GenerativeModel('gemini-1.5-flash')
-
-        # --- Construct the Analysis Prompt ---
-        # Calculate BPM from tempo (microseconds per beat) for better readability in prompt/output
-        tempo_microseconds = mvp_json_data.get('tempo', DEFAULT_TEMPO)
-        bpm = round(60_000_000 / tempo_microseconds) if tempo_microseconds > 0 else "N/A"
-
-        prompt = f"""
-You are a MIDI music analysis assistant.
-Analyze the provided musical data in JSON format, focusing on the first track.
-The JSON includes notes, the initially detected tempo ({tempo_microseconds} microseconds per beat, approx {bpm} BPM),
-and the initially detected key signature ('{mvp_json_data.get('key_signature', DEFAULT_KEY)}').
-
-Input Data:
-```json
-{json.dumps(mvp_json_data, indent=2)}
-```
-
-Based *primarily* on the note data provided, please confirm or correct:
-1. The most likely Key Signature.
-2. The primary Tempo in BPM (Beats Per Minute). You can use the provided tempo as a strong hint.
-
-Output your answer concisely in the format:
-"Key Signature: [Your Identified Key], Tempo: [Your Calculated BPM] BPM"
-
-Analysis Result:
-"""
-        print("\n--- Sending Analysis Prompt to Gemini (Optional Step 5) ---")
-        # print(prompt) # Uncomment to debug the prompt
-        print("--- End Analysis Prompt ---")
-
-        # --- Call Gemini API ---
-        print("\nCalling Gemini API for analysis...")
-        # Add safety settings to potentially reduce refusals for simple analysis
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-        ]
-        response = model.generate_content(prompt, safety_settings=safety_settings)
-        print("Received analysis response from Gemini.")
-
-        if response.parts:
-            analysis_text = response.text
-            print("\n--- Gemini Analysis Result ---")
-            print(analysis_text.strip())
-            print("--- End Gemini Analysis Result ---\n")
-        else:
-            print("Warning: Gemini analysis response did not contain expected parts.", file=sys.stderr)
-            if response.prompt_feedback:
-                print(f"Prompt Feedback: {response.prompt_feedback}", file=sys.stderr)
-
+        hasher = hashlib.sha256()
+        with open(input_midi_path, 'rb') as f:
+            while True:
+                chunk = f.read(4096)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+        file_hash = hasher.hexdigest()
+        # Ensure cache directory exists
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        return os.path.join(CACHE_DIR, f"{file_hash}.json")
     except Exception as e:
-        print(f"Warning: Error during optional Gemini analysis step: {e}", file=sys.stderr)
+        print(f"Warning: Could not generate cache key for {input_midi_path}: {e}", file=sys.stderr)
+        return None
 
 
-def call_gemini_for_detailed_analysis(mvp_json_data: dict):
+def load_analysis_from_cache(cache_filepath: str) -> dict | None:
+    """Loads analysis data from a cache file."""
+    if not cache_filepath or not os.path.exists(cache_filepath):
+        return None
+    try:
+        with open(cache_filepath, 'r') as f:
+            cached_data = json.load(f)
+        print(f"Loaded analysis from cache: {cache_filepath}")
+        return cached_data
+    except json.JSONDecodeError:
+        print(f"Warning: Invalid JSON in cache file: {cache_filepath}. Ignoring cache.", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"Warning: Could not load from cache file {cache_filepath}: {e}", file=sys.stderr)
+        return None
+
+def save_analysis_to_cache(cache_filepath: str, analysis_data: dict):
+    """Saves analysis data to a cache file."""
+    if not cache_filepath or not analysis_data:
+        return
+    try:
+        with open(cache_filepath, 'w') as f:
+            json.dump(analysis_data, f, indent=2)
+        print(f"Saved analysis to cache: {cache_filepath}")
+    except Exception as e:
+        print(f"Warning: Could not save to cache file {cache_filepath}: {e}", file=sys.stderr)
+
+
+def call_gemini_for_detailed_analysis(mvp_json_data: dict, input_midi_path: str):
     """
     (Post-MVP)
-    Constructs a prompt and calls the Gemini API for more detailed analysis.
-    Returns the analysis text or None if an error occurs.
+    Constructs a prompt and calls the Gemini API for detailed analysis, requesting JSON output.
+    Uses caching based on the input MIDI file content.
+    Returns the analysis data as a dictionary or None if an error occurs.
     """
+    # --- Caching Logic ---
+    cache_filepath = get_cache_filepath(input_midi_path)
+    cached_analysis = load_analysis_from_cache(cache_filepath)
+    if cached_analysis:
+        return cached_analysis
+    # --- End Caching Logic ---
+
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("Warning: GEMINI_API_KEY not found. Skipping detailed analysis.", file=sys.stderr)
-        return None # Return None
+        return None
 
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash') # Flash is likely sufficient
+        # Use a model that supports JSON output mode if available and needed,
+        # but flash should handle structured JSON requests reasonably well.
+        model = genai.GenerativeModel('gemini-1.5-flash')
 
         # Calculate BPM for prompt context
         tempo_microseconds = mvp_json_data.get('tempo', DEFAULT_TEMPO)
@@ -218,18 +208,29 @@ Input Data:
 {json.dumps(mvp_json_data, indent=2)}
 ```
 
-Based on the provided data (especially the notes across all tracks):
-1.  **Key Signature:** Confirm or identify the most likely overall key signature.
-2.  **Tempo:** Confirm or identify the primary tempo in BPM.
-3.  **Time Signature:** Confirm the primary time signature ({ts_str} was detected initially).
-4.  **Musical Style/Genre:** Briefly describe the likely musical style or genre (e.g., Classical, Jazz, Pop Ballad, Electronic).
-5.  **Harmony:** Briefly describe the basic harmonic structure if discernible (e.g., Simple diatonic chords, Modal, Complex jazz harmony).
+Based on the provided data (especially the notes across all tracks), provide a detailed analysis.
 
-Output your analysis clearly, addressing each point.
+**Output ONLY a valid JSON object** containing the following keys:
+- "key_signature": String (e.g., "Cmaj", "Amin") - Confirm or identify the most likely overall key signature.
+- "tempo_bpm": Integer - Confirm or identify the primary tempo in BPM.
+- "time_signature": String (e.g., "4/4", "3/4") - Confirm the primary time signature ({ts_str} was detected initially).
+- "style_genre": String - Briefly describe the likely musical style or genre (e.g., "Classical", "Jazz Ballad", "Electronic Dance").
+- "harmony_description": String - Briefly describe the basic harmonic structure (e.g., "Simple diatonic chords", "Modal harmony", "Uses extended jazz chords").
 
-Detailed Analysis:
+Example JSON Output:
+```json
+{{
+  "key_signature": "Gmaj",
+  "tempo_bpm": 140,
+  "time_signature": "4/4",
+  "style_genre": "Pop Rock",
+  "harmony_description": "Primarily uses I-V-vi-IV progression."
+}}
+```
+
+Analysis JSON:
 """
-        print("\n--- Sending Detailed Analysis Prompt to Gemini ---")
+        print("\n--- Sending Detailed Analysis Prompt to Gemini (Requesting JSON) ---")
         # print(prompt) # Uncomment to debug
         print("--- End Detailed Analysis Prompt ---")
 
@@ -241,24 +242,37 @@ Detailed Analysis:
             {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
         ]
+        # Consider adding generation_config={"response_mime_type": "application/json"} if using a model/API version that supports it explicitly.
         response = model.generate_content(prompt, safety_settings=safety_settings)
         print("Received detailed analysis response from Gemini.")
 
         if response.parts:
-            analysis_text = response.text.strip() # Strip whitespace
-            print("\n--- Gemini Detailed Analysis Result ---")
-            print(analysis_text)
-            print("--- End Gemini Detailed Analysis Result ---\n")
-            return analysis_text # Return the analysis text
+            analysis_json_text = response.text
+            print("\n--- Gemini Detailed Analysis Raw Response ---")
+            print(analysis_json_text)
+            print("--- End Gemini Detailed Analysis Raw Response ---\n")
+
+            # Parse the JSON response
+            parsed_analysis = parse_gemini_response(analysis_json_text) # Re-use existing JSON parser
+
+            if isinstance(parsed_analysis, dict): # Expecting a dictionary now
+                print("Successfully parsed analysis JSON from Gemini.")
+                # Save to cache before returning
+                save_analysis_to_cache(cache_filepath, parsed_analysis)
+                return parsed_analysis
+            else:
+                print("Error: Gemini response was not parsed into a valid dictionary.", file=sys.stderr)
+                # Optionally save the raw text to cache with an error flag? For now, just return None.
+                return None
         else:
             print("Warning: Gemini detailed analysis response did not contain expected parts.", file=sys.stderr)
             if response.prompt_feedback:
                 print(f"Prompt Feedback: {response.prompt_feedback}", file=sys.stderr)
-            return None # Return None
+            return None
 
     except Exception as e:
         print(f"Warning: Error during detailed Gemini analysis step: {e}", file=sys.stderr)
-        return None # Return None
+        return None
 
 
 def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_index: int):
@@ -439,13 +453,15 @@ Generated Notes JSON (for the new complementary track):
 def parse_gemini_response(json_text: str):
     """
     Cleans and parses the JSON string potentially returned by Gemini.
+    Handles potential markdown fences. Returns the parsed Python object (list or dict).
     """
     if not json_text:
         print("Error: Received empty response text from Gemini.", file=sys.stderr)
         return None
 
     # Attempt to remove markdown code block fences and surrounding whitespace
-    match = re.search(r'```json\s*([\s\S]*?)\s*```', json_text, re.IGNORECASE)
+    # Match ```json ... ``` or just ``` ... ```
+    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', json_text, re.IGNORECASE)
     if match:
         cleaned_text = match.group(1).strip()
     else:
@@ -458,16 +474,8 @@ def parse_gemini_response(json_text: str):
 
     try:
         parsed_data = json.loads(cleaned_text)
-        # Basic validation (expecting a list of notes)
-        if not isinstance(parsed_data, list):
-            print(f"Error: Parsed JSON is not a list as expected. Type: {type(parsed_data)}", file=sys.stderr)
-            return None
-        # Optional: Add more validation for note structure if needed
-        # for note in parsed_data:
-        #     if not all(k in note for k in ("pitch", "start_tick", "duration_tick", "velocity")):
-        #         print(f"Error: Invalid note structure found in parsed JSON: {note}", file=sys.stderr)
-        #         return None
-        print(f"Successfully parsed {len(parsed_data)} generated notes from Gemini response.")
+        # No longer validating for list type here, could be dict for analysis
+        print(f"Successfully parsed JSON data from Gemini response (Type: {type(parsed_data)}).")
         return parsed_data
     except json.JSONDecodeError as e:
         print(f"Error: Failed to decode JSON from Gemini response: {e}", file=sys.stderr)
@@ -625,40 +633,32 @@ def main():
 
     # --- Parse and Convert to JSON ---
     print("\nParsing MIDI data (all tracks) to JSON format...")
-    # Pass the loaded midi_file object
     parse_result = parse_midi_to_mvp_json(midi_file)
 
     if parse_result:
-        mvp_json_data, track_end_ticks = parse_result # Get end ticks list
+        mvp_json_data, track_end_ticks = parse_result
         print("Successfully parsed MIDI data.")
-        # Optionally print the JSON data for debugging
-        # print("\n--- MVP JSON Representation ---")
-        # print(json.dumps(mvp_json_data, indent=2))
-        # print("--- End JSON Representation ---\n")
-
-        # --- Optional Basic Analysis Step (MVP Step 5) ---
-        # call_gemini_for_analysis(mvp_json_data) # Keep or remove as desired
 
         # --- Detailed Analysis Step (Post-MVP) ---
-        print("\nRequesting detailed analysis from Gemini...")
-        analysis_result_text = call_gemini_for_detailed_analysis(mvp_json_data)
+        print("\nRequesting detailed analysis from Gemini (or loading from cache)...")
+        # Pass input_midi_path for caching
+        analysis_result_data = call_gemini_for_detailed_analysis(mvp_json_data, input_midi_path)
 
         # --- Show Analysis Results to User ---
-        if analysis_result_text:
+        if analysis_result_data: # Check if we got a dictionary
             print("Displaying analysis results...")
-            show_analysis_results("Gemini Detailed Analysis", analysis_result_text)
+            # Pass the dictionary to the TUI function
+            show_analysis_results("Gemini Detailed Analysis", analysis_result_data)
         else:
-            # Optionally inform the user analysis failed but continue anyway
-            show_error("Analysis Info", "Could not retrieve detailed analysis from Gemini.")
+            # Inform the user analysis failed or wasn't retrieved
+            show_error("Analysis Info", "Could not retrieve or parse detailed analysis from Gemini / Cache.")
             print("Continuing without displaying detailed analysis.")
-
 
     else:
         error_msg = "Failed to parse MIDI data into JSON."
         print(error_msg, file=sys.stderr)
         show_error("Parsing Error", error_msg)
         sys.exit(1)
-
 
     # --- Call Gemini for Generation based on mode ---
     generated_notes_json_text = None
@@ -677,11 +677,11 @@ def main():
 
         # --- Parse Gemini Response ---
         print("\nParsing Gemini response...")
+        # This should now correctly parse the list of notes for generation
         generated_notes = parse_gemini_response(generated_notes_json_text)
 
-        if generated_notes:
+        if isinstance(generated_notes, list): # Check if it's a list for notes
              # --- Convert to MIDI Events ---
-             print("\nConverting generated notes to MIDI events...")
              start_offset = 0
              if mode == 'extend':
                  target_track_index = settings['target_track_index']
@@ -766,7 +766,7 @@ def main():
                   show_error("Conversion Error", error_msg)
                   sys.exit(1)
         else:
-             error_msg = "Failed to parse valid notes from Gemini response."
+             error_msg = f"Failed to parse valid list of notes from Gemini generation response. Got type: {type(generated_notes)}"
              print(error_msg, file=sys.stderr)
              show_error("Parsing Error", error_msg)
              sys.exit(1)

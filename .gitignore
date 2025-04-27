@@ -20,3 +20,4 @@ env/
 *.tmp
 
 generate_sample_midi.py
+samples/sample_composition_modified.mid
