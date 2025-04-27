@@ -10,8 +10,8 @@
 -   [x] 6. Program constructs a generation prompt for Gemini (original notes JSON, key, tempo, extend request).
 -   [x] 7. Program sends the generation prompt to Gemini.
 -   [x] 8. Program receives the generated notes representation in JSON.
--   [ ] 9. Program validates and parses the generated JSON notes.
--   [ ] 10. Program converts the parsed data into MIDI note events.
--   [ ] 11. Program appends the generated MIDI events to the first track of the loaded MIDI data.
--   [ ] 12. Program saves the modified MIDI structure to `<output_midi_path>`.
--   [ ] 13. Program confirms success and provides the output file path.
+-   [x] 9. Program validates and parses the generated JSON notes.
+-   [x] 10. Program converts the parsed data into MIDI note events.
+-   [x] 11. Program appends the generated MIDI events to the first track of the loaded MIDI data.
+-   [x] 12. Program saves the modified MIDI structure to `<output_midi_path>`.
+-   [x] 13. Program confirms success and provides the output file path.

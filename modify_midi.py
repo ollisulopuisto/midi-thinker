@@ -271,7 +271,9 @@ def main():
     load_dotenv() # Load .env file
 
     parser = argparse.ArgumentParser(description="Modify a MIDI file using Gemini.")
-    # ... existing argument parsing ...
+    # Add input and output path arguments
+    parser.add_argument("input_midi_path", type=str, help="Path to the input MIDI file.")
+    parser.add_argument("output_midi_path", type=str, help="Path to save the modified MIDI file.")
     parser.add_argument("bars_to_extend", type=int, help="Number of bars to extend the first track by.") # TODO: Later change to ticks or handle bar conversion
 
     args = parser.parse_args()
