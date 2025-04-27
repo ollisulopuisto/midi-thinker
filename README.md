@@ -7,11 +7,11 @@ This project aims to create a tool that leverages the Google Gemini API to help 
 ## MVP Functionality (and initial enhancements)
 
 *   Loads a standard MIDI file (`.mid`).
-*   Extracts basic information from the first track (notes, first tempo, first key signature, first time signature).
-*   Sends this information to the Gemini API.
+*   Extracts basic information (first tempo, first key signature, first time signature) and notes from *all* tracks.
+*   Sends this information (all tracks) to the Gemini API.
 *   Prompts the user for the number of bars to extend the piece.
 *   Calculates the target extension length in MIDI ticks based on the time signature and tempo.
-*   Requests the Gemini API to generate new notes to extend the first track in a similar style for the calculated duration.
+*   Requests the Gemini API to generate new notes to extend the *first track* in a similar style, using all tracks as context.
 *   Appends the generated notes to the end of the first track.
 *   Saves the modified MIDI data to a new file.
 
@@ -59,8 +59,9 @@ This will load `my_song.mid`, ask Gemini to generate approximately 4 bars of mus
 ## Future Enhancements (Post-MVP)
 
 *   Support for Type 0 MIDI files.
-*   Analysis and modification of multiple tracks.
+*   Analysis and modification of multiple tracks. *(Partially addressed: Multi-track parsing done)*
 *   More sophisticated analysis (harmony, style).
 *   Different modification types (e.g., generating complementary parts like basslines or harmonies).
 *   Improved prompt engineering for better musical coherence.
 *   Handling of more MIDI meta-messages (multiple time signatures, program changes). *(Partially addressed: First time signature)*
+*   Generating material for tracks other than the first, or adding new tracks.

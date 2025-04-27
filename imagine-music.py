@@ -14,95 +14,92 @@ DEFAULT_TIME_SIGNATURE = {"numerator": 4, "denominator": 4} # Add default time s
 
 def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
     """
-    Parses the first track of a MIDI file to extract notes, tempo, key signature,
-    and time signature into the MVP JSON format.
+    Parses all tracks of a MIDI file to extract notes, plus tempo, key signature,
+    and time signature from the first track, into the MVP JSON format.
     """
     if not midi_file.tracks:
         print("Warning: MIDI file has no tracks.", file=sys.stderr)
         return None # Or handle more gracefully
 
-    # --- Find first tempo and key signature ---
-    # According to spec, look in the first track for MVP.
-    # For Type 1 files, tempo/key are often in track 0, but we stick to spec for now.
-    first_track = midi_file.tracks[0]
+    # --- Find first tempo, key signature, and time signature from Track 0 (or first track) ---
+    # For Type 1 files, these are often in track 0. For Type 0, they are mixed in.
+    # We stick to reading from the first track available for MVP+.
+    first_track_meta = midi_file.tracks[0]
     tempo = DEFAULT_TEMPO
     key_signature = DEFAULT_KEY
-    time_signature_data = DEFAULT_TIME_SIGNATURE.copy() # Use default initially
+    time_signature_data = DEFAULT_TIME_SIGNATURE.copy()
     found_tempo = False
     found_key = False
-    found_time_sig = False # Flag for time signature
+    found_time_sig = False
 
-    # First pass for meta messages (tempo, key, time signature)
-    for msg in first_track:
+    for msg in first_track_meta:
         if msg.is_meta:
             if msg.type == 'set_tempo' and not found_tempo:
                 tempo = msg.tempo
                 found_tempo = True
                 print(f"Found tempo: {tempo}")
             elif msg.type == 'key_signature' and not found_key:
-                key_signature = msg.key # mido provides the key name directly
+                key_signature = msg.key
                 found_key = True
                 print(f"Found key signature: {key_signature}")
             elif msg.type == 'time_signature' and not found_time_sig:
-                # Store relevant time signature info
                 time_signature_data['numerator'] = msg.numerator
                 time_signature_data['denominator'] = msg.denominator
-                # Optional: store clocks_per_click, notated_32nd_notes_per_beat if needed later
-                # time_signature_data['clocks_per_click'] = msg.clocks_per_click
-                # time_signature_data['notated_32nd_notes_per_beat'] = msg.notated_32nd_notes_per_beat
                 found_time_sig = True
                 print(f"Found time signature: {msg.numerator}/{msg.denominator}")
-
         if found_tempo and found_key and found_time_sig:
-            break # Optimization: stop searching once all are found
+            break
 
-    # --- Extract notes from the first track ---
-    notes = []
-    current_time_ticks = 0
-    active_notes = {}  # pitch -> (start_tick, velocity)
+    # --- Extract notes from ALL tracks ---
+    all_tracks_notes = []
+    last_tick_first_track = 0 # Keep track of the end of the first track specifically
 
-    for msg in first_track:
-        current_time_ticks += msg.time # Accumulate delta time in ticks
+    for i, track in enumerate(midi_file.tracks):
+        notes = []
+        current_time_ticks = 0
+        active_notes = {}  # pitch -> (start_tick, velocity)
+        print(f"Processing Track {i}...")
 
-        if msg.type == 'note_on' and msg.velocity > 0:
-            # Store note_on event
-            active_notes[msg.note] = (current_time_ticks, msg.velocity)
-        elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-            # Note_off event or note_on with velocity 0
-            if msg.note in active_notes:
-                start_tick, velocity = active_notes.pop(msg.note)
-                duration_tick = current_time_ticks - start_tick
-                if duration_tick >= 0: # Avoid negative duration if events are weirdly ordered
-                    notes.append({
-                        "pitch": msg.note,
-                        "start_tick": start_tick,
-                        "duration_tick": duration_tick,
-                        "velocity": velocity
-                    })
-            # else: Note off without matching note on - ignore for MVP
+        for msg in track:
+            current_time_ticks += msg.time
 
-    if active_notes:
-        print(f"Warning: {len(active_notes)} notes were left active at the end of the track.", file=sys.stderr)
-        # Optionally handle these dangling notes, e.g., by giving them a default duration till end?
+            if msg.type == 'note_on' and msg.velocity > 0:
+                active_notes[msg.note] = (current_time_ticks, msg.velocity)
+            elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                if msg.note in active_notes:
+                    start_tick, velocity = active_notes.pop(msg.note)
+                    duration_tick = current_time_ticks - start_tick
+                    if duration_tick >= 0:
+                        notes.append({
+                            "pitch": msg.note,
+                            "start_tick": start_tick,
+                            "duration_tick": duration_tick,
+                            "velocity": velocity
+                        })
+                # else: Note off without matching note on - ignore
+
+        if active_notes:
+            print(f"Warning: Track {i} - {len(active_notes)} notes were left active at the end.", file=sys.stderr)
+            # Optionally handle dangling notes
+
+        all_tracks_notes.append({"notes": notes})
+        if i == 0:
+            last_tick_first_track = current_time_ticks # Record end time of the first track
+
+        print(f"Track {i}: Found {len(notes)} notes. Ends at tick {current_time_ticks}.")
+
 
     # --- Construct JSON ---
     mvp_representation = {
         "tempo": tempo,
         "key_signature": key_signature,
-        "time_signature": time_signature_data, # Add time signature
+        "time_signature": time_signature_data,
         "ticks_per_beat": midi_file.ticks_per_beat,
-        "tracks": [
-            {
-                "notes": notes
-            }
-        ]
+        "tracks": all_tracks_notes # Include notes from all tracks
     }
 
-    # --- Also return the last tick time of the track ---
-    last_tick = current_time_ticks # The time accumulated at the end of the loop
-
-    # Return both JSON and the last tick time
-    return mvp_representation, last_tick
+    # Return both JSON and the last tick time of the FIRST track (for appending)
+    return mvp_representation, last_tick_first_track
 
 def call_gemini_for_analysis(mvp_json_data: dict):
     """
@@ -177,7 +174,8 @@ Analysis Result:
 
 def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int):
     """
-    Constructs a prompt and calls the Gemini API to generate extended notes.
+    Constructs a prompt and calls the Gemini API to generate extended notes
+    for the FIRST track, using all tracks as context.
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -201,28 +199,33 @@ def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int):
         ticks_per_bar = ticks_per_beat * numerator
         target_extension_ticks = ticks_per_bar * bars_to_extend
 
-        extension_request = (f"Extend the following musical piece by approximately {bars_to_extend} bars "
-                             f"(target duration: around {target_extension_ticks} ticks).")
+        extension_request = (f"Extend the musical piece by approximately {bars_to_extend} bars "
+                             f"(target duration: around {target_extension_ticks} ticks). "
+                             f"Generate new notes ONLY for the FIRST track (track 0). "
+                             f"Use the existing notes from all tracks as musical context.")
 
         prompt = f"""
 You are a MIDI music generation assistant.
-Analyze the provided musical data in JSON format and generate new musical material
-that extends the piece in a similar style.
+Analyze the provided musical data in JSON format which contains multiple tracks.
+Generate new musical material that extends the piece in a similar style.
 
-Input Data:
+**IMPORTANT**: Generate new notes ONLY for the FIRST track (track index 0).
+You can use the content of other tracks as musical context for your generation.
+
+Input Data (Multiple Tracks):
 ```json
 {json.dumps(mvp_json_data, indent=2)}
 ```
 
 Request: {extension_request}
 
-Output ONLY the JSON representation of the *new* notes to be appended.
+Output ONLY the JSON representation of the *new* notes to be appended to the FIRST track.
 The JSON should be a list of note objects, each with "pitch", "start_tick", "duration_tick", and "velocity".
 The "start_tick" for the new notes should be relative to the beginning of the *extension* (i.e., start from 0 or a small positive value).
 Do not include the original notes in the output.
 Ensure the output is valid JSON.
 
-Example output format for new notes:
+Example output format for new notes (for the first track):
 ```json
 [
   {{ "pitch": 60, "start_tick": 0, "duration_tick": 480, "velocity": 90 }},
@@ -230,7 +233,7 @@ Example output format for new notes:
 ]
 ```
 
-Generated Notes JSON:
+Generated Notes JSON (for Track 0):
 """
         print("\n--- Sending Prompt to Gemini ---")
         # print(prompt) # Uncomment to debug the prompt
@@ -383,11 +386,11 @@ def main():
         sys.exit(1)
 
     # --- Parse and Convert to JSON ---
-    print("\nParsing MIDI data to MVP JSON format...")
+    print("\nParsing MIDI data (all tracks) to JSON format...")
     parse_result = parse_midi_to_mvp_json(midi_file)
 
     if parse_result:
-        mvp_json_data, last_original_tick = parse_result
+        mvp_json_data, last_original_tick_first_track = parse_result # Renamed variable
         print("Successfully parsed MIDI data.")
         # Optionally print the JSON data for debugging
         # print("\n--- MVP JSON Representation ---")
@@ -395,6 +398,7 @@ def main():
         # print("--- End JSON Representation ---\n")
 
         # --- Optional Analysis Step (MVP Step 5) ---
+        # Analysis prompt currently only uses global tempo/key, doesn't need change yet
         call_gemini_for_analysis(mvp_json_data)
 
     else:
@@ -402,6 +406,7 @@ def main():
         sys.exit(1)
 
     # --- Call Gemini for Generation ---
+    # Pass the full JSON data, but generation targets the first track
     generated_notes_json_text = call_gemini_for_extension(mvp_json_data, args.bars_to_extend)
 
     if generated_notes_json_text:
@@ -414,19 +419,14 @@ def main():
         if generated_notes:
              # --- Convert to MIDI Events (Step 10) ---
              print("\nConverting generated notes to MIDI events...")
-             # Use last_original_tick as the offset for the new events
-             new_midi_events = generated_notes_to_midi_events(generated_notes, last_original_tick)
+             # Use last_original_tick_first_track as the offset for the new events
+             new_midi_events = generated_notes_to_midi_events(generated_notes, last_original_tick_first_track) # Use renamed variable
 
              if new_midi_events:
                  # --- Append to Track (Step 11) ---
-                 print(f"\nAppending {len(new_midi_events)} new events to the first track...")
-                 # Ensure the first track exists
+                 # Still appending only to the first track for "Extend"
+                 print(f"\nAppending {len(new_midi_events)} new events to the first track (Track 0)...")
                  if midi_file.tracks:
-                     # Adjust time of the first new event relative to the *last event* in the original track
-                     # Mido handles delta times internally when appending, but the first delta needs care.
-                     # The generated_notes_to_midi_events already calculates deltas relative to last_original_tick.
-                     # We might need to adjust the *very first* delta if the original track didn't end exactly at last_original_tick
-                     # For simplicity in MVP, we assume the delta calculation is sufficient.
                      midi_file.tracks[0].extend(new_midi_events)
                      print("Append successful.")
 
