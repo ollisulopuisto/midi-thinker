@@ -14,8 +14,9 @@ DEFAULT_TIME_SIGNATURE = {"numerator": 4, "denominator": 4} # Add default time s
 
 def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
     """
-    Parses all tracks of a MIDI file to extract notes, plus tempo, key signature,
-    and time signature from the first track, into the MVP JSON format.
+    Parses all tracks of a MIDI file to extract notes and the first program change,
+    plus tempo, key signature, and time signature from the first track,
+    into the MVP JSON format.
     """
     if not midi_file.tracks:
         print("Warning: MIDI file has no tracks.", file=sys.stderr)
@@ -50,17 +51,25 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
         if found_tempo and found_key and found_time_sig:
             break
 
-    # --- Extract notes from ALL tracks ---
-    all_tracks_notes = []
-    last_tick_first_track = 0 # Keep track of the end of the first track specifically
+    # --- Extract notes and program change from ALL tracks ---
+    all_tracks_data = [] # Renamed from all_tracks_notes
+    last_tick_first_track = 0
 
     for i, track in enumerate(midi_file.tracks):
         notes = []
         current_time_ticks = 0
-        active_notes = {}  # pitch -> (start_tick, velocity)
+        active_notes = {}
+        first_program_change = None # Store the program number of the first program_change msg
+        found_program_change = False
         print(f"Processing Track {i}...")
 
         for msg in track:
+            # Find first program_change in the track
+            if not found_program_change and msg.type == 'program_change':
+                first_program_change = msg.program
+                found_program_change = True
+                print(f"  Found program change: {first_program_change}")
+
             current_time_ticks += msg.time
 
             if msg.type == 'note_on' and msg.velocity > 0:
@@ -82,11 +91,15 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
             print(f"Warning: Track {i} - {len(active_notes)} notes were left active at the end.", file=sys.stderr)
             # Optionally handle dangling notes
 
-        all_tracks_notes.append({"notes": notes})
+        # Add track data including notes and instrument program
+        all_tracks_data.append({
+            "instrument_program": first_program_change if found_program_change else 0, # Default to 0 (Piano) if not found
+            "notes": notes
+        })
         if i == 0:
-            last_tick_first_track = current_time_ticks # Record end time of the first track
+            last_tick_first_track = current_time_ticks
 
-        print(f"Track {i}: Found {len(notes)} notes. Ends at tick {current_time_ticks}.")
+        print(f"Track {i}: Instrument Program: {first_program_change if found_program_change else '0 (Default)'}. Found {len(notes)} notes. Ends at tick {current_time_ticks}.")
 
 
     # --- Construct JSON ---
@@ -95,7 +108,7 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
         "key_signature": key_signature,
         "time_signature": time_signature_data,
         "ticks_per_beat": midi_file.ticks_per_beat,
-        "tracks": all_tracks_notes # Include notes from all tracks
+        "tracks": all_tracks_data # Use the new list containing track data
     }
 
     # Return both JSON and the last tick time of the FIRST track (for appending)

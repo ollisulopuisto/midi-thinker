@@ -56,7 +56,7 @@ This project aims to create a tool that leverages the Gemini API to analyze and 
 12. Program saves the modified MIDI structure to `<output_midi_path>`.
 13. Program confirms success and provides the output file path.
 
-**5. MVP Data Representation (Initial + Time Signature + Multi-Track)**
+**5. MVP Data Representation (Initial + Time Signature + Multi-Track + Instrument)**
 
 *   A JSON object containing:
     *   `tempo`: integer (microseconds per beat)
@@ -65,6 +65,7 @@ This project aims to create a tool that leverages the Gemini API to analyze and 
     *   `ticks_per_beat`: integer
     *   `tracks`: List containing track objects for *all* tracks found in the MIDI. *(Enhanced Post-MVP)*
         *   Track object contains:
+            *   `instrument_program`: integer or null (MIDI program number, first found in track). *(Added Post-MVP)*
             *   `notes`: List of note objects.
                 *   Note object: `{ "pitch": int, "start_tick": int, "duration_tick": int, "velocity": int }`
 
@@ -84,7 +85,7 @@ This project aims to create a tool that leverages the Gemini API to analyze and 
 *   **Full MIDI-to-JSON Conversion:**
     *   Represent *all* tracks. *(Addressed)*
     *   Handle meta-messages (multiple time signature changes, multiple tempos/keys). *(Partially addressed: First time signature parsed)*
-    *   Handle program changes (instruments).
+    *   Handle program changes (instruments). *(Partially addressed: First program change per track parsed)*
 *   **Sophisticated Analysis (via Gemini):**
     *   Identify main melody lines across tracks. *(Now possible with multi-track JSON)*
     *   Detailed harmonic analysis (chord progressions with timing, inversions, extensions). *(Now possible with multi-track JSON)*
@@ -96,14 +97,14 @@ This project aims to create a tool that leverages the Gemini API to analyze and 
     *   Structured parameter input (dropdowns, fields for style, part type, variations).
 *   **Advanced Generation (via Gemini):**
     *   Generate specific complementary parts.
-    *   Control over instrumentation, dynamics, rhythm.
+    *   Control over instrumentation, dynamics, rhythm. *(Prerequisite: Instrument parsing done)*
     *   Generate variations based on style.
     *   Handle multi-track generation. *(Partially addressed: Context used, generation still single-track)*
 *   **Intelligent MIDI Output:**
     *   Add generated parts as *new* tracks for "Complement".
     *   Integrate generated tempo/key/time signature changes.
-    *   Handle program changes for generated tracks.
-*   **Refined Data Representation:** Develop a more comprehensive JSON structure for Gemini to handle the complexity above. *(Partially addressed: Multi-track notes)*
+    *   Handle program changes for generated tracks. *(Prerequisite: Instrument parsing done)*
+*   **Refined Data Representation:** Develop a more comprehensive JSON structure for Gemini to handle the complexity above. *(Partially addressed: Multi-track notes, instrument)*
 *   **Improved Prompt Engineering:** Iteratively refine prompts for better musical coherence, quality, and control. *(Partially addressed: More precise extension length, multi-track context)*
 *   **Context Window Management:** Decide how much context (whole piece vs. recent bars) to provide Gemini.
 *   **Robust Error Handling:** Handle diverse MIDI file issues, API limits, musically nonsensical output.
