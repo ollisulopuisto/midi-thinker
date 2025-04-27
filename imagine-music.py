@@ -1,4 +1,3 @@
-import argparse
 import mido
 import sys
 import json
@@ -6,6 +5,7 @@ import os
 import google.generativeai as genai
 from dotenv import load_dotenv
 import re # Added import for cleaning JSON
+from tui import get_user_input, show_error, show_success # Import TUI functions
 
 # Default values if not found in MIDI
 DEFAULT_TEMPO = 500000  # 120 bpm
@@ -541,40 +541,31 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
 def main():
     load_dotenv() # Load .env file
 
-    parser = argparse.ArgumentParser(description="Modify or extend a MIDI file using Gemini.")
-    parser.add_argument("input_midi_path", type=str, help="Path to the input MIDI file.")
-    parser.add_argument("output_midi_path", type=str, help="Path to save the modified MIDI file.")
-    parser.add_argument("--mode", type=str, choices=['extend', 'complement'], default='extend',
-                        help="Operation mode: 'extend' the first track or add a 'complement' track (default: extend).")
-    # Arguments specific to 'extend' mode
-    parser.add_argument("--bars_to_extend", type=int, default=4,
-                        help="Number of bars to extend the first track by (used only if mode is 'extend').")
-    # Arguments specific to 'complement' mode
-    parser.add_argument("--complement_type", type=str, default="bassline",
-                        help="Type of complementary part to generate (e.g., 'bassline', 'harmony', 'counter-melody') (used only if mode is 'complement').")
+    # --- Get User Input via TUI ---
+    settings = get_user_input()
+    if not settings:
+        print("Operation cancelled by user.")
+        sys.exit(0)
 
+    input_midi_path = settings['input_path']
+    output_midi_path = settings['output_path']
+    mode = settings['mode']
 
-    args = parser.parse_args()
-
-    # Validate arguments based on mode
-    if args.mode == 'extend' and args.bars_to_extend <= 0:
-        print("Error: --bars_to_extend must be positive for 'extend' mode.", file=sys.stderr)
-        sys.exit(1)
-    # No specific validation needed for complement_type yet
-
-    print(f"Loading MIDI file: {args.input_midi_path}")
-    print(f"Mode: {args.mode}")
-    if args.mode == 'extend':
-        print(f"Bars to extend: {args.bars_to_extend}")
-    elif args.mode == 'complement':
-        print(f"Complement type: {args.complement_type}")
+    print(f"Loading MIDI file: {input_midi_path}")
+    print(f"Mode: {mode}")
+    if mode == 'extend':
+        print(f"Bars to extend: {settings['bars_to_extend']}")
+    elif mode == 'complement':
+        print(f"Complement type: {settings['complement_type']}")
 
 
     try:
-        midi_file = mido.MidiFile(args.input_midi_path)
+        midi_file = mido.MidiFile(input_midi_path)
         # Basic check: Does it have tracks?
         if not midi_file.tracks:
-             print(f"Error: Input MIDI file '{args.input_midi_path}' contains no tracks.", file=sys.stderr)
+             error_msg = f"Error: Input MIDI file '{input_midi_path}' contains no tracks."
+             print(error_msg, file=sys.stderr)
+             show_error("MIDI Load Error", error_msg)
              sys.exit(1)
         # Check MIDI type (informational)
         print(f"MIDI Type: {midi_file.type}")
@@ -584,10 +575,14 @@ def main():
              print("Warning: Type 2 MIDI files are not fully supported. Results may be unpredictable.", file=sys.stderr)
 
     except FileNotFoundError:
-        print(f"Error: Input MIDI file not found at '{args.input_midi_path}'", file=sys.stderr)
+        error_msg = f"Error: Input MIDI file not found at '{input_midi_path}'"
+        print(error_msg, file=sys.stderr)
+        show_error("File Not Found", error_msg)
         sys.exit(1)
     except Exception as e:
-        print(f"Error loading MIDI file: {e}", file=sys.stderr)
+        error_msg = f"Error loading MIDI file: {e}"
+        print(error_msg, file=sys.stderr)
+        show_error("MIDI Load Error", error_msg)
         sys.exit(1)
 
     # --- Parse and Convert to JSON ---
@@ -609,19 +604,21 @@ def main():
         call_gemini_for_detailed_analysis(mvp_json_data)
 
     else:
-        print("Failed to parse MIDI data into JSON.", file=sys.stderr)
+        error_msg = "Failed to parse MIDI data into JSON."
+        print(error_msg, file=sys.stderr)
+        show_error("Parsing Error", error_msg)
         sys.exit(1)
 
 
     # --- Call Gemini for Generation based on mode ---
     generated_notes_json_text = None
-    if args.mode == 'extend':
-        generated_notes_json_text = call_gemini_for_extension(mvp_json_data, args.bars_to_extend)
-    elif args.mode == 'complement':
-        generated_notes_json_text = call_gemini_for_complement(mvp_json_data, args.complement_type)
+    if mode == 'extend':
+        generated_notes_json_text = call_gemini_for_extension(mvp_json_data, settings['bars_to_extend'])
+    elif mode == 'complement':
+        generated_notes_json_text = call_gemini_for_complement(mvp_json_data, settings['complement_type'])
 
     if generated_notes_json_text:
-        print(f"Successfully received generation response from Gemini for mode '{args.mode}'.")
+        print(f"Successfully received generation response from Gemini for mode '{mode}'.")
 
         # --- Parse Gemini Response ---
         print("\nParsing Gemini response...")
@@ -631,27 +628,29 @@ def main():
              # --- Convert to MIDI Events ---
              print("\nConverting generated notes to MIDI events...")
              start_offset = 0
-             if args.mode == 'extend':
+             if mode == 'extend':
                  start_offset = last_original_tick_first_track # Append after original track 0 content
-             elif args.mode == 'complement':
+             elif mode == 'complement':
                  start_offset = 0 # New track starts from time 0
 
              new_midi_events = generated_notes_to_midi_events(generated_notes, start_offset)
 
              if new_midi_events is not None: # Check if conversion was successful (might return empty list)
                  # --- Add Events to MIDI File ---
-                 if args.mode == 'extend':
+                 if mode == 'extend':
                      print(f"\nAppending {len(new_midi_events)} new events to the first track (Track 0)...")
                      if midi_file.tracks:
                          midi_file.tracks[0].extend(new_midi_events)
                          print("Append successful.")
                      else:
                           # This check should be redundant due to earlier check, but good practice
-                          print("Error: Cannot append events, MIDI file has no tracks.", file=sys.stderr)
+                          error_msg = "Error: Cannot append events, MIDI file has no tracks."
+                          print(error_msg, file=sys.stderr)
+                          show_error("MIDI Error", error_msg)
                           sys.exit(1)
 
-                 elif args.mode == 'complement':
-                     print(f"\nCreating a new track for the '{args.complement_type}' complement...")
+                 elif mode == 'complement':
+                     print(f"\nCreating a new track for the '{settings['complement_type']}' complement...")
                      new_track = mido.MidiTrack()
                      midi_file.tracks.append(new_track)
                      print(f"Appended new Track {len(midi_file.tracks) - 1}.")
@@ -659,11 +658,12 @@ def main():
                      # Add a program change message at the beginning of the new track
                      # Determine instrument based on complement type (simple logic for now)
                      instrument_program = DEFAULT_COMPLEMENT_INSTRUMENT
-                     if "bass" in args.complement_type.lower():
+                     comp_type_lower = settings['complement_type'].lower()
+                     if "bass" in comp_type_lower:
                          instrument_program = ACOUSTIC_BASS
-                     elif "harmony" in args.complement_type.lower():
+                     elif "harmony" in comp_type_lower or "pad" in comp_type_lower:
                          instrument_program = 89 # Pad 1 (New Age) - example
-                     elif "melody" in args.complement_type.lower():
+                     elif "melody" in comp_type_lower:
                          instrument_program = 81 # Lead 1 (Square) - example
                      # Add more mappings as needed
 
@@ -679,28 +679,38 @@ def main():
 
                  # --- Save MIDI File ---
                  try:
-                     print(f"\nSaving modified MIDI to: {args.output_midi_path}")
+                     print(f"\nSaving modified MIDI to: {output_midi_path}")
                      # Ensure the output directory exists
-                     output_dir = os.path.dirname(args.output_midi_path)
+                     output_dir = os.path.dirname(output_midi_path)
                      if output_dir and not os.path.exists(output_dir):
                          os.makedirs(output_dir)
                          print(f"Created output directory: {output_dir}")
 
-                     midi_file.save(args.output_midi_path)
-                     print(f"\nSuccess! Modified MIDI saved to {args.output_midi_path}")
+                     midi_file.save(output_midi_path)
+                     success_msg = f"Success! Modified MIDI saved to {output_midi_path}"
+                     print(f"\n{success_msg}")
+                     show_success("Operation Successful", success_msg)
                  except Exception as e:
-                     print(f"Error saving MIDI file: {e}", file=sys.stderr)
+                     error_msg = f"Error saving MIDI file: {e}"
+                     print(error_msg, file=sys.stderr)
+                     show_error("Save Error", error_msg)
                      sys.exit(1)
 
              else:
-                  print("Failed to convert generated notes to MIDI events (returned None or error).", file=sys.stderr)
+                  error_msg = "Failed to convert generated notes to MIDI events (returned None or error)."
+                  print(error_msg, file=sys.stderr)
+                  show_error("Conversion Error", error_msg)
                   sys.exit(1)
         else:
-             print("Failed to parse valid notes from Gemini response.", file=sys.stderr)
+             error_msg = "Failed to parse valid notes from Gemini response."
+             print(error_msg, file=sys.stderr)
+             show_error("Parsing Error", error_msg)
              sys.exit(1)
 
     else:
-        print(f"Failed to get valid generation response from Gemini for mode '{args.mode}'.", file=sys.stderr)
+        error_msg = f"Failed to get valid generation response from Gemini for mode '{mode}'."
+        print(error_msg, file=sys.stderr)
+        show_error("Gemini Error", error_msg)
         sys.exit(1)
 
 
