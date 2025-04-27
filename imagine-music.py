@@ -177,8 +177,13 @@ def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int):
 
         # --- Construct the Prompt (MVP Step 6) ---
         # TODO: Refine this prompt significantly based on testing.
-        # TODO: Calculate extension length in ticks based on bars_to_extend, tempo, and ticks_per_beat.
-        # For now, just passing the number of bars as a concept.
+        # TODO: Calculate extension length in ticks based on bars_to_extend, tempo, ticks_per_beat,
+        #       and potentially the time signature (which isn't parsed in MVP).
+        #       For MVP, we rely on Gemini interpreting "approximately X bars".
+        # Example calculation (assuming 4/4 time):
+        # ticks_per_bar = mvp_json_data['ticks_per_beat'] * 4
+        # target_extension_ticks = ticks_per_bar * bars_to_extend
+        # extension_request = f"Extend the following musical piece by approximately {target_extension_ticks} ticks (which is about {bars_to_extend} bars)."
         extension_request = f"Extend the following musical piece by approximately {bars_to_extend} bars."
 
         prompt = f"""

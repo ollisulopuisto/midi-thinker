@@ -15,3 +15,5 @@
 -   [x] 11. Program appends the generated MIDI events to the first track of the loaded MIDI data.
 -   [x] 12. Program saves the modified MIDI structure to `<output_midi_path>`.
 -   [x] 13. Program confirms success and provides the output file path.
+
+**Note:** All core MVP steps are implemented. Further refinement, especially in prompt engineering (Step 6 - calculating extension length more precisely, improving style matching) and error handling, is needed for better results.
