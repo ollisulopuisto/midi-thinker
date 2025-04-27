@@ -41,17 +41,18 @@ def select_input_file():
     return input_path
 
 
-def get_user_input(input_path: str):
+def get_user_input(input_path: str, num_tracks: int):
     """
     Guides the user through prompts for output path, mode, and parameters,
-    using the provided input_path.
+    using the provided input_path and number of tracks.
 
     Args:
         input_path (str): The path to the input MIDI file.
+        num_tracks (int): The number of tracks in the input MIDI file.
 
     Returns:
         dict: A dictionary containing the user's selections (excluding input_path),
-              e.g., {'output_path': '...', 'mode': '...', ...}
+              e.g., {'output_path': '...', 'mode': '...', 'target_track_index': 0, ...}
               Returns None if the user cancels any step.
     """
     settings = {}
@@ -76,7 +77,7 @@ def get_user_input(input_path: str):
         title='Select Mode',
         text='Choose the operation mode:',
         values=[
-            ('extend', 'Extend First Track'),
+            ('extend', 'Extend Track'),
             ('complement', 'Add Complementary Track')
         ]
     ).run()
@@ -85,14 +86,33 @@ def get_user_input(input_path: str):
 
     # 3. Get Mode-Specific Parameters
     if mode == 'extend':
+        # 3a. Select Track to Extend (if multiple tracks exist)
+        target_track_index = 0
+        if num_tracks > 1:
+            track_values = [(str(i), f"Track {i}") for i in range(num_tracks)]
+            selected_track_str = radiolist_dialog(
+                title='Select Track to Extend',
+                text=f'Which track do you want to extend? (0-{num_tracks-1})',
+                values=track_values
+            ).run()
+            if selected_track_str is None: return None # User cancelled
+            target_track_index = int(selected_track_str)
+        else:
+            print("Only one track found. Extending Track 0.")
+            # target_track_index remains 0
+
+        settings['target_track_index'] = target_track_index
+
+        # 3b. Get Bars to Extend
         bars = input_dialog(
             title='Extend Settings',
-            text='Enter the number of bars to extend:',
+            text=f'Enter the number of bars to extend Track {target_track_index}:',
             default='4',
             validator=NumberValidator()
         ).run()
         if bars is None: return None # User cancelled
         settings['bars_to_extend'] = int(bars)
+
     elif mode == 'complement':
         comp_type = input_dialog(
             title='Complement Settings',
@@ -117,13 +137,27 @@ def show_success(title, text):
 if __name__ == '__main__':
     test_input_path = select_input_file()
     if test_input_path:
-        print(f"Selected input file: {test_input_path}")
-        user_settings = get_user_input(test_input_path)
-        if user_settings:
-            print("\nUser Settings (excluding input path):")
-            for key, value in user_settings.items():
-                print(f"  {key}: {value}")
-        else:
-            print("\nUser cancelled during settings input.")
+        # Simulate having loaded the file to get track count (replace with actual loading if needed for testing)
+        try:
+            # Dummy check for existence
+            if not os.path.exists(test_input_path):
+                 raise FileNotFoundError
+            # Minimal load just to get track count for testing
+            import mido
+            mid = mido.MidiFile(test_input_path)
+            track_count = len(mid.tracks)
+            print(f"Selected input file: {test_input_path} (Tracks: {track_count})")
+            user_settings = get_user_input(test_input_path, track_count)
+            if user_settings:
+                print("\nUser Settings (excluding input path):")
+                for key, value in user_settings.items():
+                    print(f"  {key}: {value}")
+            else:
+                print("\nUser cancelled during settings input.")
+        except FileNotFoundError:
+             print(f"Error: Test input file not found at '{test_input_path}'")
+        except Exception as e:
+             print(f"Error loading test file: {e}")
+
     else:
         print("\nUser cancelled input file selection.")

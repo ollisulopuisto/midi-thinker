@@ -19,15 +19,13 @@ DEFAULT_COMPLEMENT_INSTRUMENT = ACOUSTIC_BASS
 
 def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
     """
-    Parses all tracks of a MIDI file to extract notes and the first program change,
+    Parses all tracks of a loaded MIDI file to extract notes and the first program change,
     plus tempo, key signature, and time signature from the first track,
-    into the MVP JSON format.
+    into the MVP JSON format. Also returns the end tick of each track.
     """
-    if not midi_file.tracks:
-        print("Warning: MIDI file has no tracks.", file=sys.stderr)
-        return None # Or handle more gracefully
+    # No need to check midi_file.tracks here, should be checked before calling
 
-    # --- Find first tempo, key signature, and time signature from Track 0 (or first track) ---
+    # --- Find first tempo, key signature, and time signature from Track 0 ---
     # For Type 1 files, these are often in track 0. For Type 0, they are mixed in.
     # We stick to reading from the first track available for MVP+.
     first_track_meta = midi_file.tracks[0]
@@ -57,14 +55,15 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
             break
 
     # --- Extract notes and program change from ALL tracks ---
-    all_tracks_data = [] # Renamed from all_tracks_notes
-    last_tick_first_track = 0
+    all_tracks_data = []
+    track_end_ticks = [] # Store end tick for each track
 
     for i, track in enumerate(midi_file.tracks):
+        # ... existing code to extract notes and first_program_change ...
         notes = []
         current_time_ticks = 0
         active_notes = {}
-        first_program_change = None # Store the program number of the first program_change msg
+        first_program_change = None
         found_program_change = False
         print(f"Processing Track {i}...")
 
@@ -90,7 +89,6 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
                             "duration_tick": duration_tick,
                             "velocity": velocity
                         })
-                # else: Note off without matching note on - ignore
 
         if active_notes:
             print(f"Warning: Track {i} - {len(active_notes)} notes were left active at the end.", file=sys.stderr)
@@ -98,11 +96,10 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
 
         # Add track data including notes and instrument program
         all_tracks_data.append({
-            "instrument_program": first_program_change if found_program_change else 0, # Default to 0 (Piano) if not found
+            "instrument_program": first_program_change if found_program_change else 0,
             "notes": notes
         })
-        if i == 0:
-            last_tick_first_track = current_time_ticks
+        track_end_ticks.append(current_time_ticks) # Store the end tick for this track
 
         print(f"Track {i}: Instrument Program: {first_program_change if found_program_change else '0 (Default)'}. Found {len(notes)} notes. Ends at tick {current_time_ticks}.")
 
@@ -113,11 +110,11 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
         "key_signature": key_signature,
         "time_signature": time_signature_data,
         "ticks_per_beat": midi_file.ticks_per_beat,
-        "tracks": all_tracks_data # Use the new list containing track data
+        "tracks": all_tracks_data
     }
 
-    # Return both JSON and the last tick time of the FIRST track (for appending)
-    return mvp_representation, last_tick_first_track
+    # Return JSON and the list of end ticks
+    return mvp_representation, track_end_ticks
 
 def call_gemini_for_analysis(mvp_json_data: dict):
     """
@@ -260,10 +257,10 @@ Detailed Analysis:
         print(f"Warning: Error during detailed Gemini analysis step: {e}", file=sys.stderr)
 
 
-def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int):
+def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_index: int):
     """
     Constructs a prompt and calls the Gemini API to generate extended notes
-    for the FIRST track, using all tracks as context.
+    for the specified target track, using all tracks as context.
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -273,31 +270,30 @@ def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int):
 
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash') # Or choose another appropriate model
+        model = genai.GenerativeModel('gemini-1.5-flash')
 
-        # --- Construct the Prompt (MVP Step 6 / Post-MVP Refinement) ---
+        # --- Construct the Prompt ---
         # Calculate extension length in ticks using time signature
-        ticks_per_beat = mvp_json_data.get('ticks_per_beat', 480) # Default if missing
+        ticks_per_beat = mvp_json_data.get('ticks_per_beat', 480)
         time_sig = mvp_json_data.get('time_signature', DEFAULT_TIME_SIGNATURE)
         numerator = time_sig.get('numerator', DEFAULT_TIME_SIGNATURE['numerator'])
-        # Denominator interpretation for beats per bar is complex in MIDI.
-        # Simplification: Assume numerator directly gives beats per bar (common for x/4 time).
-        # A more robust calculation would use the denominator: beats_per_bar = numerator * (4 / denominator)
-        # but let's stick to the simpler approach for now.
         ticks_per_bar = ticks_per_beat * numerator
         target_extension_ticks = ticks_per_bar * bars_to_extend
 
+        # Update extension request to mention the target track index
         extension_request = (f"Extend the musical piece by approximately {bars_to_extend} bars "
                              f"(target duration: around {target_extension_ticks} ticks). "
-                             f"Generate new notes ONLY for the FIRST track (track 0). "
+                             f"Generate new notes ONLY for Track {target_track_index}. "
                              f"Use the existing notes from all tracks as musical context.")
+        target_instrument = mvp_json_data["tracks"][target_track_index].get("instrument_program", 0)
+
 
         prompt = f"""
 You are a MIDI music generation assistant.
 Analyze the provided musical data in JSON format which contains multiple tracks.
 Generate new musical material that extends the piece in a similar style.
 
-**IMPORTANT**: Generate new notes ONLY for the FIRST track (track index 0).
+**IMPORTANT**: Generate new notes ONLY for Track {target_track_index} (which uses instrument program {target_instrument}).
 You can use the content of other tracks as musical context for your generation.
 
 Input Data (Multiple Tracks):
@@ -307,13 +303,13 @@ Input Data (Multiple Tracks):
 
 Request: {extension_request}
 
-Output ONLY the JSON representation of the *new* notes to be appended to the FIRST track.
+Output ONLY the JSON representation of the *new* notes to be appended to Track {target_track_index}.
 The JSON should be a list of note objects, each with "pitch", "start_tick", "duration_tick", and "velocity".
 The "start_tick" for the new notes should be relative to the beginning of the *extension* (i.e., start from 0 or a small positive value).
 Do not include the original notes in the output.
 Ensure the output is valid JSON.
 
-Example output format for new notes (for the first track):
+Example output format for new notes (for Track {target_track_index}):
 ```json
 [
   {{ "pitch": 60, "start_tick": 0, "duration_tick": 480, "velocity": 90 }},
@@ -321,27 +317,25 @@ Example output format for new notes (for the first track):
 ]
 ```
 
-Generated Notes JSON (for Track 0):
+Generated Notes JSON (for Track {target_track_index}):
 """
-        print("\n--- Sending Prompt to Gemini ---")
+        print(f"\n--- Sending Prompt to Gemini (Extend Track {target_track_index}) ---")
         # print(prompt) # Uncomment to debug the prompt
         print("--- End Prompt ---")
 
-        # --- Call Gemini API (MVP Step 7) ---
+        # --- Call Gemini API ---
         print("\nCalling Gemini API...")
         response = model.generate_content(prompt)
         print("Received response from Gemini.")
 
-        # Basic check for response content (more robust parsing needed later)
         if response.parts:
-            generated_json_text = response.text # Access text directly
+            generated_json_text = response.text
             print("\n--- Gemini Response Text ---")
             print(generated_json_text)
             print("--- End Gemini Response Text ---\n")
-            return generated_json_text # Return the raw text for now
+            return generated_json_text
         else:
             print("Warning: Gemini response did not contain expected parts.", file=sys.stderr)
-            # Print safety feedback if available
             if response.prompt_feedback:
                 print(f"Prompt Feedback: {response.prompt_feedback}", file=sys.stderr)
             return None
@@ -554,6 +548,7 @@ def main():
     )
     args = parser.parse_args()
 
+
     # --- Determine Input Path (CLI or TUI) ---
     input_midi_path = args.input
     if not input_midi_path:
@@ -566,34 +561,22 @@ def main():
     else:
         print(f"Using input file from command line: {input_midi_path}")
 
-
-    # --- Get Remaining User Input via TUI ---
-    # Pass the determined input_midi_path to the TUI function
-    settings = get_user_input(input_midi_path)
-    if not settings:
-        print("Operation cancelled by user during settings input.")
-        sys.exit(0)
-
-    # Combine input path with other settings
-    settings['input_path'] = input_midi_path
-    output_midi_path = settings['output_path']
-    mode = settings['mode']
-
-    print(f"\nLoading MIDI file: {input_midi_path}")
-    print(f"Mode: {mode}")
-    if mode == 'extend':
-        print(f"Bars to extend: {settings['bars_to_extend']}")
-    elif mode == 'complement':
-        print(f"Complement type: {settings['complement_type']}")
-
+    # --- Validate and Load Input MIDI File ---
     try:
+        # Check if file exists before trying to load
+        if not os.path.exists(input_midi_path):
+            raise FileNotFoundError(f"Input MIDI file not found at '{input_midi_path}'")
+
+        print(f"\nLoading MIDI file: {input_midi_path}")
         midi_file = mido.MidiFile(input_midi_path)
+
         # Basic check: Does it have tracks?
         if not midi_file.tracks:
              error_msg = f"Error: Input MIDI file '{input_midi_path}' contains no tracks."
              print(error_msg, file=sys.stderr)
              show_error("MIDI Load Error", error_msg)
              sys.exit(1)
+
         # Check MIDI type (informational)
         print(f"MIDI Type: {midi_file.type}")
         if midi_file.type == 0 and len(midi_file.tracks) > 1:
@@ -601,8 +584,10 @@ def main():
         elif midi_file.type == 2:
              print("Warning: Type 2 MIDI files are not fully supported. Results may be unpredictable.", file=sys.stderr)
 
-    except FileNotFoundError:
-        error_msg = f"Error: Input MIDI file not found at '{input_midi_path}'"
+        num_tracks = len(midi_file.tracks) # Get number of tracks
+
+    except FileNotFoundError as e:
+        error_msg = str(e)
         print(error_msg, file=sys.stderr)
         show_error("File Not Found", error_msg)
         sys.exit(1)
@@ -612,12 +597,35 @@ def main():
         show_error("MIDI Load Error", error_msg)
         sys.exit(1)
 
+
+    # --- Get Remaining User Input via TUI ---
+    # Pass the determined input_midi_path and num_tracks to the TUI function
+    settings = get_user_input(input_midi_path, num_tracks)
+    if not settings:
+        print("Operation cancelled by user during settings input.")
+        sys.exit(0)
+
+    # Combine input path with other settings
+    settings['input_path'] = input_midi_path # Keep for consistency if needed elsewhere, though midi_file is loaded
+    output_midi_path = settings['output_path']
+    mode = settings['mode']
+
+    # Print selected mode details
+    print(f"\nSelected Mode: {mode}")
+    if mode == 'extend':
+        print(f"Target Track: {settings['target_track_index']}")
+        print(f"Bars to extend: {settings['bars_to_extend']}")
+    elif mode == 'complement':
+        print(f"Complement type: {settings['complement_type']}")
+
+
     # --- Parse and Convert to JSON ---
     print("\nParsing MIDI data (all tracks) to JSON format...")
+    # Pass the loaded midi_file object
     parse_result = parse_midi_to_mvp_json(midi_file)
 
     if parse_result:
-        mvp_json_data, last_original_tick_first_track = parse_result
+        mvp_json_data, track_end_ticks = parse_result # Get end ticks list
         print("Successfully parsed MIDI data.")
         # Optionally print the JSON data for debugging
         # print("\n--- MVP JSON Representation ---")
@@ -640,7 +648,12 @@ def main():
     # --- Call Gemini for Generation based on mode ---
     generated_notes_json_text = None
     if mode == 'extend':
-        generated_notes_json_text = call_gemini_for_extension(mvp_json_data, settings['bars_to_extend'])
+        target_track_index = settings['target_track_index']
+        generated_notes_json_text = call_gemini_for_extension(
+            mvp_json_data,
+            settings['bars_to_extend'],
+            target_track_index
+        )
     elif mode == 'complement':
         generated_notes_json_text = call_gemini_for_complement(mvp_json_data, settings['complement_type'])
 
@@ -656,7 +669,15 @@ def main():
              print("\nConverting generated notes to MIDI events...")
              start_offset = 0
              if mode == 'extend':
-                 start_offset = last_original_tick_first_track # Append after original track 0 content
+                 target_track_index = settings['target_track_index']
+                 # Use the end tick of the selected track
+                 if target_track_index < len(track_end_ticks):
+                     start_offset = track_end_ticks[target_track_index]
+                 else:
+                     # Fallback or error if index is somehow invalid (shouldn't happen with TUI validation)
+                     print(f"Error: Invalid target track index {target_track_index}. Defaulting offset to 0.", file=sys.stderr)
+                     start_offset = 0
+
              elif mode == 'complement':
                  start_offset = 0 # New track starts from time 0
 
@@ -665,13 +686,14 @@ def main():
              if new_midi_events is not None: # Check if conversion was successful (might return empty list)
                  # --- Add Events to MIDI File ---
                  if mode == 'extend':
-                     print(f"\nAppending {len(new_midi_events)} new events to the first track (Track 0)...")
-                     if midi_file.tracks:
-                         midi_file.tracks[0].extend(new_midi_events)
+                     target_track_index = settings['target_track_index']
+                     print(f"\nAppending {len(new_midi_events)} new events to Track {target_track_index}...")
+                     # Ensure target track index is valid before extending
+                     if 0 <= target_track_index < len(midi_file.tracks):
+                         midi_file.tracks[target_track_index].extend(new_midi_events)
                          print("Append successful.")
                      else:
-                          # This check should be redundant due to earlier check, but good practice
-                          error_msg = "Error: Cannot append events, MIDI file has no tracks."
+                          error_msg = f"Error: Invalid target track index {target_track_index} for appending events."
                           print(error_msg, file=sys.stderr)
                           show_error("MIDI Error", error_msg)
                           sys.exit(1)
