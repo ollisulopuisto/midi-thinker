@@ -22,63 +22,58 @@ DEFAULT_COMPLEMENT_INSTRUMENT = ACOUSTIC_BASS
 
 def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
     """
-    Parses all tracks of a loaded MIDI file to extract notes and the first program change,
-    plus tempo, key signature, and time signature from the first track,
-    into the MVP JSON format. Also returns the end tick of each track.
+    Parses a loaded MIDI file (Type 0 or 1) to extract notes, instruments,
+    tempo, key, and time signature into the MVP JSON format.
+    Also returns the end tick of each track (or the single track for Type 0).
     """
-    # No need to check midi_file.tracks here, should be checked before calling
-
-    # --- Find first tempo, key signature, and time signature from Track 0 ---
-    # For Type 1 files, these are often in track 0. For Type 0, they are mixed in.
-    # We stick to reading from the first track available for MVP+.
-    first_track_meta = midi_file.tracks[0]
     tempo = DEFAULT_TEMPO
     key_signature = DEFAULT_KEY
     time_signature_data = DEFAULT_TIME_SIGNATURE.copy()
     found_tempo = False
     found_key = False
     found_time_sig = False
-
-    for msg in first_track_meta:
-        if msg.is_meta:
-            if msg.type == 'set_tempo' and not found_tempo:
-                tempo = msg.tempo
-                found_tempo = True
-                print(f"Found tempo: {tempo}")
-            elif msg.type == 'key_signature' and not found_key:
-                key_signature = msg.key
-                found_key = True
-                print(f"Found key signature: {key_signature}")
-            elif msg.type == 'time_signature' and not found_time_sig:
-                time_signature_data['numerator'] = msg.numerator
-                time_signature_data['denominator'] = msg.denominator
-                found_time_sig = True
-                print(f"Found time signature: {msg.numerator}/{msg.denominator}")
-        if found_tempo and found_key and found_time_sig:
-            break
-
-    # --- Extract notes and program change from ALL tracks ---
     all_tracks_data = []
-    track_end_ticks = [] # Store end tick for each track
+    track_end_ticks = []
 
-    for i, track in enumerate(midi_file.tracks):
-        # ... existing code to extract notes and first_program_change ...
+    if midi_file.type == 0:
+        print("Parsing Type 0 MIDI file (single track)...")
+        if not midi_file.tracks:
+            print("Warning: Type 0 file has no track data.", file=sys.stderr)
+            return None, None # Cannot parse if no track exists
+
+        track = midi_file.tracks[0]
         notes = []
         current_time_ticks = 0
         active_notes = {}
         first_program_change = None
         found_program_change = False
-        print(f"Processing Track {i}...")
 
         for msg in track:
-            # Find first program_change in the track
+            # Find first meta messages within the single track
+            if msg.is_meta:
+                if msg.type == 'set_tempo' and not found_tempo:
+                    tempo = msg.tempo
+                    found_tempo = True
+                    print(f"Found tempo: {tempo}")
+                elif msg.type == 'key_signature' and not found_key:
+                    key_signature = msg.key
+                    found_key = True
+                    print(f"Found key signature: {key_signature}")
+                elif msg.type == 'time_signature' and not found_time_sig:
+                    time_signature_data['numerator'] = msg.numerator
+                    time_signature_data['denominator'] = msg.denominator
+                    found_time_sig = True
+                    print(f"Found time signature: {msg.numerator}/{msg.denominator}")
+
+            # Find first program_change
             if not found_program_change and msg.type == 'program_change':
                 first_program_change = msg.program
                 found_program_change = True
-                print(f"  Found program change: {first_program_change}")
+                print(f"  Found program change: {first_program_change} (assuming for all notes)")
 
             current_time_ticks += msg.time
 
+            # Extract notes
             if msg.type == 'note_on' and msg.velocity > 0:
                 active_notes[msg.note] = (current_time_ticks, msg.velocity)
             elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
@@ -94,17 +89,143 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
                         })
 
         if active_notes:
-            print(f"Warning: Track {i} - {len(active_notes)} notes were left active at the end.", file=sys.stderr)
-            # Optionally handle dangling notes
+            print(f"Warning: Type 0 Track - {len(active_notes)} notes were left active at the end.", file=sys.stderr)
 
-        # Add track data including notes and instrument program
         all_tracks_data.append({
             "instrument_program": first_program_change if found_program_change else 0,
             "notes": notes
         })
-        track_end_ticks.append(current_time_ticks) # Store the end tick for this track
+        track_end_ticks.append(current_time_ticks)
+        print(f"Type 0 Track: Instrument Program: {first_program_change if found_program_change else '0 (Default)'}. Found {len(notes)} notes. Ends at tick {current_time_ticks}.")
 
-        print(f"Track {i}: Instrument Program: {first_program_change if found_program_change else '0 (Default)'}. Found {len(notes)} notes. Ends at tick {current_time_ticks}.")
+    elif midi_file.type == 1:
+        print("Parsing Type 1 MIDI file (multiple tracks)...")
+        if not midi_file.tracks:
+             print("Warning: Type 1 file has no track data.", file=sys.stderr)
+             return None, None
+
+        # --- Find first tempo, key signature, and time signature from Track 0 ---
+        first_track_meta = midi_file.tracks[0]
+        for msg in first_track_meta:
+            if msg.is_meta:
+                if msg.type == 'set_tempo' and not found_tempo:
+                    tempo = msg.tempo
+                    found_tempo = True
+                    print(f"Found tempo: {tempo}")
+                elif msg.type == 'key_signature' and not found_key:
+                    key_signature = msg.key
+                    found_key = True
+                    print(f"Found key signature: {key_signature}")
+                elif msg.type == 'time_signature' and not found_time_sig:
+                    time_signature_data['numerator'] = msg.numerator
+                    time_signature_data['denominator'] = msg.denominator
+                    found_time_sig = True
+                    print(f"Found time signature: {msg.numerator}/{msg.denominator}")
+            if found_tempo and found_key and found_time_sig:
+                break
+
+        # --- Extract notes and program change from ALL tracks ---
+        for i, track in enumerate(midi_file.tracks):
+            notes = []
+            current_time_ticks = 0
+            active_notes = {}
+            first_program_change = None
+            found_program_change = False
+            print(f"Processing Track {i}...")
+
+            for msg in track:
+                # Find first program_change in the track
+                if not found_program_change and msg.type == 'program_change':
+                    first_program_change = msg.program
+                    found_program_change = True
+                    print(f"  Found program change: {first_program_change}")
+
+                current_time_ticks += msg.time
+
+                if msg.type == 'note_on' and msg.velocity > 0:
+                    active_notes[msg.note] = (current_time_ticks, msg.velocity)
+                elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                    if msg.note in active_notes:
+                        start_tick, velocity = active_notes.pop(msg.note)
+                        duration_tick = current_time_ticks - start_tick
+                        if duration_tick >= 0:
+                            notes.append({
+                                "pitch": msg.note,
+                                "start_tick": start_tick,
+                                "duration_tick": duration_tick,
+                                "velocity": velocity
+                            })
+
+            if active_notes:
+                print(f"Warning: Track {i} - {len(active_notes)} notes were left active at the end.", file=sys.stderr)
+
+            # Add track data including notes and instrument program
+            all_tracks_data.append({
+                "instrument_program": first_program_change if found_program_change else 0,
+                "notes": notes
+            })
+            track_end_ticks.append(current_time_ticks) # Store the end tick for this track
+            print(f"Track {i}: Instrument Program: {first_program_change if found_program_change else '0 (Default)'}. Found {len(notes)} notes. Ends at tick {current_time_ticks}.")
+
+    else: # Type 2 or other unsupported types
+         print(f"Warning: MIDI file type {midi_file.type} is not fully supported. Attempting Type 1 parsing.", file=sys.stderr)
+         # Fallback to Type 1 logic for now
+         # (This part is identical to the Type 1 block above, could be refactored)
+         if not midi_file.tracks:
+             print("Warning: File has no track data.", file=sys.stderr)
+             return None, None
+         first_track_meta = midi_file.tracks[0]
+         for msg in first_track_meta:
+             if msg.is_meta:
+                 if msg.type == 'set_tempo' and not found_tempo:
+                     tempo = msg.tempo
+                     found_tempo = True
+                     print(f"Found tempo: {tempo}")
+                 elif msg.type == 'key_signature' and not found_key:
+                     key_signature = msg.key
+                     found_key = True
+                     print(f"Found key signature: {key_signature}")
+                 elif msg.type == 'time_signature' and not found_time_sig:
+                     time_signature_data['numerator'] = msg.numerator
+                     time_signature_data['denominator'] = msg.denominator
+                     found_time_sig = True
+                     print(f"Found time signature: {msg.numerator}/{msg.denominator}")
+             if found_tempo and found_key and found_time_sig:
+                 break
+         for i, track in enumerate(midi_file.tracks):
+             notes = []
+             current_time_ticks = 0
+             active_notes = {}
+             first_program_change = None
+             found_program_change = False
+             print(f"Processing Track {i}...")
+             for msg in track:
+                 if not found_program_change and msg.type == 'program_change':
+                     first_program_change = msg.program
+                     found_program_change = True
+                     print(f"  Found program change: {first_program_change}")
+                 current_time_ticks += msg.time
+                 if msg.type == 'note_on' and msg.velocity > 0:
+                     active_notes[msg.note] = (current_time_ticks, msg.velocity)
+                 elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                     if msg.note in active_notes:
+                         start_tick, velocity = active_notes.pop(msg.note)
+                         duration_tick = current_time_ticks - start_tick
+                         if duration_tick >= 0:
+                             notes.append({
+                                 "pitch": msg.note,
+                                 "start_tick": start_tick,
+                                 "duration_tick": duration_tick,
+                                 "velocity": velocity
+                             })
+             if active_notes:
+                 print(f"Warning: Track {i} - {len(active_notes)} notes were left active at the end.", file=sys.stderr)
+             all_tracks_data.append({
+                 "instrument_program": first_program_change if found_program_change else 0,
+                 "notes": notes
+             })
+             track_end_ticks.append(current_time_ticks)
+             print(f"Track {i}: Instrument Program: {first_program_change if found_program_change else '0 (Default)'}. Found {len(notes)} notes. Ends at tick {current_time_ticks}.")
 
 
     # --- Construct JSON ---
@@ -685,13 +806,22 @@ def main():
              sys.exit(1)
 
         # Check MIDI type (informational)
-        print(f"MIDI Type: {midi_file.type}")
-        if midi_file.type == 0 and len(midi_file.tracks) > 1:
-            print("Warning: Type 0 MIDI file with multiple tracks found. Treating as a single logical track.", file=sys.stderr)
-        elif midi_file.type == 2:
+        midi_type = midi_file.type
+        print(f"MIDI Type: {midi_type}")
+        if midi_type == 0:
+            # Type 0 files have only one track conceptually, even if mido shows more internally sometimes.
+            # Our parsing logic handles this by creating a single entry in all_tracks_data.
+            num_logical_tracks = 1
+            print("Treating as single logical track for modification.")
+        elif midi_type == 1:
+            num_logical_tracks = len(midi_file.tracks)
+        elif midi_type == 2:
              print("Warning: Type 2 MIDI files are not fully supported. Results may be unpredictable.", file=sys.stderr)
+             num_logical_tracks = len(midi_file.tracks) # Treat like Type 1 for now
+        else:
+             print(f"Warning: Unknown MIDI file type {midi_type}. Treating as Type 1.", file=sys.stderr)
+             num_logical_tracks = len(midi_file.tracks)
 
-        num_tracks = len(midi_file.tracks) # Get number of tracks
 
     except FileNotFoundError as e:
         error_msg = str(e)
@@ -706,8 +836,8 @@ def main():
 
 
     # --- Get Remaining User Input via TUI ---
-    # Pass the determined input_midi_path and num_tracks to the TUI function
-    settings = get_user_input(input_midi_path, num_tracks)
+    # Pass the determined input_midi_path, number of logical tracks, and midi_type
+    settings = get_user_input(input_midi_path, num_logical_tracks, midi_type)
     if not settings:
         print("Operation cancelled by user during settings input.")
         sys.exit(0)
@@ -724,13 +854,15 @@ def main():
         print(f"Bars to extend: {settings['bars_to_extend']}")
     elif mode == 'complement':
         print(f"Complement type: {settings['complement_type']}")
+        print(f"Complement instrument program: {settings['instrument_program']}")
 
 
     # --- Parse and Convert to JSON ---
-    print("\nParsing MIDI data (all tracks) to JSON format...")
+    print("\nParsing MIDI data to JSON format...")
+    # Pass the already loaded midi_file object
     parse_result = parse_midi_to_mvp_json(midi_file)
 
-    if parse_result:
+    if parse_result and parse_result[0] is not None: # Check if parsing succeeded
         mvp_json_data, track_end_ticks = parse_result
         print("Successfully parsed MIDI data.")
 
@@ -802,35 +934,46 @@ def main():
     start_offset = 0
     if mode == 'extend':
         target_track_index = settings['target_track_index']
-        # Use the end tick of the selected track
-        if target_track_index < len(track_end_ticks):
-            start_offset = track_end_ticks[target_track_index]
-        else:
-            # Fallback or error if index is somehow invalid (shouldn't happen with TUI validation)
-            print(f"Error: Invalid target track index {target_track_index}. Defaulting offset to 0.", file=sys.stderr)
-            start_offset = 0
-
-    elif mode == 'complement':
-        start_offset = 0 # New track starts from time 0
-
-    new_midi_events = generated_notes_to_midi_events(generated_notes, start_offset)
-
-    # --- Add Events to MIDI File ---
-    if mode == 'extend':
-        target_track_index = settings['target_track_index']
+        # For Type 0, target_track_index will always be 0 from TUI logic
         print(f"\nAppending {len(new_midi_events)} new events to Track {target_track_index}...")
         # Ensure target track index is valid before extending
-        if 0 <= target_track_index < len(midi_file.tracks):
-            midi_file.tracks[target_track_index].extend(new_midi_events)
+        # For Type 0, len(midi_file.tracks) might be > 1 internally for mido, but we parsed into 1 logical track.
+        # However, we append to the actual mido track structure.
+        # If Type 0, we append to midi_file.tracks[0].
+        # If Type 1, we append to the selected track index.
+        actual_target_mido_track_index = target_track_index if midi_type != 0 else 0
+
+        if 0 <= actual_target_mido_track_index < len(midi_file.tracks):
+            # Make sure the track exists before extending
+            target_track = midi_file.tracks[actual_target_mido_track_index]
+
+            # Remove existing end_of_track before appending if present
+            if target_track and target_track[-1].is_meta and target_track[-1].type == 'end_of_track':
+                 target_track.pop()
+
+            target_track.extend(new_midi_events)
+
+            # Add a new end_of_track message
+            # Calculate the time for the final end_of_track based on the last event added
+            last_event_absolute_tick = start_offset + (generated_notes[-1]['start_tick'] + generated_notes[-1]['duration_tick'] if generated_notes else 0)
+            # Find the actual end tick of the track *after* adding events
+            current_track_end_tick = 0
+            for msg in target_track:
+                current_track_end_tick += msg.time
+
+            # Add end_of_track with 0 delta time right after the last message
+            target_track.append(mido.MetaMessage('end_of_track', time=0))
+
             print("Append successful.")
         else:
-             error_msg = f"Error: Invalid target track index {target_track_index} for appending events."
+             error_msg = f"Error: Invalid target Mido track index {actual_target_mido_track_index} for appending events."
              print(error_msg, file=sys.stderr)
              show_error("MIDI Error", error_msg)
              sys.exit(1)
 
     elif mode == 'complement':
         # --- Check MIDI type before adding track ---
+        original_type = midi_file.type # Store original type before potentially changing it
         if midi_file.type == 0:
             print("\nWarning: Original MIDI is Type 0. Adding a track requires converting the output file to Type 1.", file=sys.stderr)
             midi_file.type = 1 # Change type to allow multiple tracks for saving
@@ -838,27 +981,32 @@ def main():
         print(f"\nCreating a new track for the '{settings['complement_type']}' complement...")
         new_track = mido.MidiTrack()
         midi_file.tracks.append(new_track)
-        print(f"Appended new Track {len(midi_file.tracks) - 1}.")
+        new_track_index = len(midi_file.tracks) - 1
+        print(f"Appended new Track {new_track_index}.")
 
         # Add a program change message at the beginning of the new track
-        # Determine instrument based on complement type (simple logic for now)
-        instrument_program = DEFAULT_COMPLEMENT_INSTRUMENT
-        comp_type_lower = settings['complement_type'].lower()
-        if "bass" in comp_type_lower:
-            instrument_program = ACOUSTIC_BASS
-        elif "harmony" in comp_type_lower or "pad" in comp_type_lower:
-            instrument_program = 89 # Pad 1 (New Age) - example
-        elif "melody" in comp_type_lower:
-            instrument_program = 81 # Lead 1 (Square) - example
-        # Add more mappings as needed
-
+        instrument_program = settings['instrument_program'] # Use user-selected instrument
         print(f"Setting instrument for new track to Program {instrument_program}.")
-        # Add program change with delta time 0 at the start
         new_track.append(mido.Message('program_change', program=instrument_program, time=0))
 
         # Add the generated notes
         print(f"Adding {len(new_midi_events)} generated events to the new track...")
         new_track.extend(new_midi_events)
+
+        # Add end_of_track message to the new track
+        # Calculate end tick based on the added events
+        if new_midi_events:
+             # Find the time of the last message added
+             last_msg_tick = 0
+             temp_tick = 0
+             for msg in new_midi_events:
+                 temp_tick += msg.time
+                 last_msg_tick = temp_tick
+             # Add end_of_track with delta 0 right after the last message
+             new_track.append(mido.MetaMessage('end_of_track', time=0))
+        else:
+             new_track.append(mido.MetaMessage('end_of_track', time=0)) # Add immediately if no notes
+
         print("Events added to new track.")
 
     # --- Save MIDI File ---
@@ -873,11 +1021,8 @@ def main():
         midi_file.save(output_midi_path)
         success_msg = f"Success! Modified MIDI saved to {output_midi_path}"
         # Add note about type change if applicable
-        if mode == 'complement' and midi_file.type == 1 and len(midi_file.tracks) > 1:
-            # Check if it *was* type 0 implicitly by checking if we just set it to 1
-            # A more robust check would involve storing the original type earlier
-            # For now, assume if it's complement mode, type 1, and >1 track, it was likely converted
-            success_msg += " (Note: Output file is Type 1)."
+        if mode == 'complement' and original_type == 0 and midi_file.type == 1:
+            success_msg += " (Note: Original was Type 0, output file is Type 1)."
 
         print(f"\n{success_msg}")
         show_success("Operation Successful", success_msg)
