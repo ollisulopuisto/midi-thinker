@@ -9,7 +9,7 @@ This project aims to create a tool that leverages the Google Gemini API to help 
 *   Loads a standard MIDI file (`.mid`) via command-line argument or TUI file selector.
 *   Extracts basic information (first tempo, first key signature, first time signature).
 *   Extracts notes and the first instrument program number (`program_change`) from *all* tracks.
-*   Sends this information (all tracks) to the Gemini API for detailed analysis (key, tempo, time sig, style, harmony).
+*   Sends this information (all tracks) to the Gemini API for detailed analysis (key, tempo, time sig, style, harmony), with caching.
 *   **Displays the detailed analysis results to the user.**
 *   Prompts the user via TUI to select a mode:
     *   **Extend Track**: Choose a track and number of bars to extend.
@@ -20,6 +20,7 @@ This project aims to create a tool that leverages the Google Gemini API to help 
     *   Complement: Generates notes for a *new track*.
 *   Appends the generated notes to the end of the selected track (Extend) or adds them as a new track with an appropriate instrument (Complement).
 *   Saves the modified MIDI data to a user-specified output file.
+*   Includes basic error handling for file loading, API calls (including blocked prompts), and response parsing, with user feedback via TUI. *(New)*
 
 ## Setup
 
@@ -35,7 +36,7 @@ This project aims to create a tool that leverages the Google Gemini API to help 
     ```
 3.  **Install dependencies:**
     ```bash
-    pip install mido python-dotenv google-generativeai
+    pip install mido python-dotenv google-generativeai prompt_toolkit
     ```
 4.  **Set up API Key:**
     *   Copy the `.env.template` file to `.env`.
@@ -56,19 +57,19 @@ python imagine-music.py -i ./path/to/your/input.mid
 
 The script will then:
 1. Load the MIDI file.
-2. Perform detailed analysis using Gemini.
+2. Perform detailed analysis using Gemini (or load from cache).
 3. **Show you the analysis results.**
 4. Guide you through the TUI to select the operation mode (Extend/Complement), output file, and mode-specific parameters.
 5. Generate the music with Gemini.
 6. Save the result to your specified output path.
 
-**Example:**
+**Example (using TUI after providing input file):**
 
 ```bash
-python imagine-music.py ./input/my_song.mid ./output/my_song_extended.mid 4
+python imagine-music.py -i ./samples/sample_composition.mid
 ```
 
-This will load `my_song.mid`, ask Gemini to generate approximately 4 bars of music (calculated based on the MIDI's time signature) based on the first track, append it, and save the result to `my_song_extended.mid`.
+This will load `sample_composition.mid`, show analysis, and then prompt you via TUI for the mode, output path, and other settings.
 
 ## Future Enhancements (Post-MVP)
 
@@ -88,5 +89,5 @@ This will load `my_song.mid`, ask Gemini to generate approximately 4 bars of mus
     *   Generate variations based on style.
 *   **Intelligent MIDI Output:**
     *   Integrate generated tempo/key/time signature changes.
-*   **Robust Error Handling.**
+*   **Robust Error Handling.** *(Partially addressed: API errors, blocked prompts, parsing issues)*
 *   **Evaluation Methods.**

@@ -9,7 +9,7 @@ This project aims to create a tool that leverages the Gemini API to analyze and 
 *   **Programming Language:** Python 3.x
 *   **MIDI Library:** `mido` (for low-level MIDI event manipulation). `pretty_midi` might be considered post-MVP for easier structural analysis.
 *   **Gemini API Client:** Google AI Python SDK (`google-generativeai`).
-*   **User Interface:** Command-Line Interface (CLI).
+*   **User Interface:** Command-Line Interface (CLI) enhanced with Textual User Interface (TUI) via `prompt_toolkit`. *(Updated)*
 *   **Data Representation for Gemini:** JSON. The complexity will evolve from MVP to later stages.
 
 **3. MVP Core Functionality**
@@ -75,7 +75,7 @@ This project aims to create a tool that leverages the Gemini API to analyze and 
 *   **JSON-to-MIDI Conversion:** Correctly converting the generated notes (with potentially relative start times from Gemini) back into MIDI events with accurate delta times for appending.
 *   **Gemini Prompt Engineering (Basic):** Crafting prompts that reliably make Gemini generate notes in the correct JSON format for the simple "Extend" task.
 *   **Musical Coherence (Basic):** Even simple extensions might sound disjointed. MVP accepts this; quality improvement is post-MVP.
-*   **Error Handling:** Basic handling for file errors, API connection issues, and potentially unparseable JSON from Gemini.
+*   **Error Handling:** Basic handling for file errors, API connection issues, and potentially unparseable JSON from Gemini. *(Partially addressed Post-MVP)*
 
 **7. Post-MVP Refinements & Enhancements**
 
@@ -107,7 +107,7 @@ This project aims to create a tool that leverages the Gemini API to analyze and 
 *   **Refined Data Representation:** Develop a more comprehensive JSON structure for Gemini to handle the complexity above. *(Partially addressed: Multi-track notes, instrument)*
 *   **Improved Prompt Engineering:** Iteratively refine prompts for better musical coherence, quality, and control. *(Partially addressed: More precise extension length, multi-track context, complement type hints)*
 *   **Context Window Management:** Decide how much context (whole piece vs. recent bars) to provide Gemini.
-*   **Robust Error Handling:** Handle diverse MIDI file issues, API limits, musically nonsensical output.
+*   **Robust Error Handling:** Handle diverse MIDI file issues, API limits, musically nonsensical output. *(Partially addressed: API errors, blocked prompts, parsing issues)*
 *   **Evaluation:** Develop methods (potentially simple rule-based checks or subjective listening tests) to evaluate output quality.
 *   **Further Future Ideas:** GUI, style transfer, arrangement, drum patterns, real-time interaction, model finetuning, iterative refinement loop.
 

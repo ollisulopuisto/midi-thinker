@@ -4,6 +4,8 @@ import json
 import os
 import argparse
 import google.generativeai as genai
+from google.generativeai.types import generation_types # For specific exception handling
+from google.api_core import exceptions as google_exceptions # For API errors
 from dotenv import load_dotenv
 import re
 import hashlib # Added for caching
@@ -246,32 +248,56 @@ Analysis JSON:
         response = model.generate_content(prompt, safety_settings=safety_settings)
         print("Received detailed analysis response from Gemini.")
 
-        if response.parts:
-            analysis_json_text = response.text
-            print("\n--- Gemini Detailed Analysis Raw Response ---")
-            print(analysis_json_text)
-            print("--- End Gemini Detailed Analysis Raw Response ---\n")
-
-            # Parse the JSON response
-            parsed_analysis = parse_gemini_response(analysis_json_text) # Re-use existing JSON parser
-
-            if isinstance(parsed_analysis, dict): # Expecting a dictionary now
-                print("Successfully parsed analysis JSON from Gemini.")
-                # Save to cache before returning
-                save_analysis_to_cache(cache_filepath, parsed_analysis)
-                return parsed_analysis
-            else:
-                print("Error: Gemini response was not parsed into a valid dictionary.", file=sys.stderr)
-                # Optionally save the raw text to cache with an error flag? For now, just return None.
-                return None
-        else:
-            print("Warning: Gemini detailed analysis response did not contain expected parts.", file=sys.stderr)
+        # Check for blocked response *before* accessing parts
+        if not response.parts:
+            block_reason = None
+            safety_feedback = None
             if response.prompt_feedback:
-                print(f"Prompt Feedback: {response.prompt_feedback}", file=sys.stderr)
+                 block_reason = response.prompt_feedback.block_reason
+                 safety_feedback = response.prompt_feedback.safety_ratings
+            error_msg = "Gemini detailed analysis response was empty or blocked."
+            if block_reason:
+                error_msg += f" Reason: {block_reason}."
+            if safety_feedback:
+                 error_msg += f" Safety Feedback: {safety_feedback}"
+            print(error_msg, file=sys.stderr)
+            show_error("Gemini Analysis Error", error_msg) # Show error in TUI
             return None
 
+        analysis_json_text = response.text
+        print("\n--- Gemini Detailed Analysis Raw Response ---")
+        print(analysis_json_text)
+        print("--- End Gemini Detailed Analysis Raw Response ---\n")
+
+        # Parse the JSON response
+        parsed_analysis = parse_gemini_response(analysis_json_text) # Re-use existing JSON parser
+
+        if isinstance(parsed_analysis, dict): # Expecting a dictionary now
+            print("Successfully parsed analysis JSON from Gemini.")
+            # Save to cache before returning
+            save_analysis_to_cache(cache_filepath, parsed_analysis)
+            return parsed_analysis
+        else:
+            # Error message now includes more context from parse_gemini_response if parsing failed
+            error_msg = "Gemini analysis response was not parsed into a valid dictionary."
+            print(error_msg, file=sys.stderr)
+            show_error("Analysis Parsing Error", error_msg) # Show error in TUI
+            return None
+
+    except generation_types.BlockedPromptException as e:
+        error_msg = f"Gemini detailed analysis prompt was blocked: {e}"
+        print(error_msg, file=sys.stderr)
+        show_error("Gemini Analysis Error", error_msg)
+        return None
+    except google_exceptions.GoogleAPIError as e:
+        error_msg = f"Gemini API error during detailed analysis: {e}"
+        print(error_msg, file=sys.stderr)
+        show_error("Gemini API Error", error_msg)
+        return None
     except Exception as e:
-        print(f"Warning: Error during detailed Gemini analysis step: {e}", file=sys.stderr)
+        error_msg = f"Unexpected error during detailed Gemini analysis: {e}"
+        print(error_msg, file=sys.stderr)
+        show_error("Analysis Error", error_msg)
         return None
 
 
@@ -343,24 +369,52 @@ Generated Notes JSON (for Track {target_track_index}):
 
         # --- Call Gemini API ---
         print("\nCalling Gemini API...")
-        response = model.generate_content(prompt)
+        # Add safety settings similar to analysis
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+        ]
+        response = model.generate_content(prompt, safety_settings=safety_settings)
         print("Received response from Gemini.")
 
-        if response.parts:
-            generated_json_text = response.text
-            print("\n--- Gemini Response Text ---")
-            print(generated_json_text)
-            print("--- End Gemini Response Text ---\n")
-            return generated_json_text
-        else:
-            print("Warning: Gemini response did not contain expected parts.", file=sys.stderr)
+        # Check for blocked response *before* accessing parts
+        if not response.parts:
+            block_reason = None
+            safety_feedback = None
             if response.prompt_feedback:
-                print(f"Prompt Feedback: {response.prompt_feedback}", file=sys.stderr)
+                 block_reason = response.prompt_feedback.block_reason
+                 safety_feedback = response.prompt_feedback.safety_ratings
+            error_msg = "Gemini extension response was empty or blocked."
+            if block_reason:
+                error_msg += f" Reason: {block_reason}."
+            if safety_feedback:
+                 error_msg += f" Safety Feedback: {safety_feedback}"
+            print(error_msg, file=sys.stderr)
+            show_error("Gemini Extension Error", error_msg) # Show error in TUI
             return None
 
+        generated_json_text = response.text
+        print("\n--- Gemini Response Text ---")
+        print(generated_json_text)
+        print("--- End Gemini Response Text ---\n")
+        return generated_json_text
+
+    except generation_types.BlockedPromptException as e:
+        error_msg = f"Gemini extension prompt was blocked: {e}"
+        print(error_msg, file=sys.stderr)
+        show_error("Gemini Extension Error", error_msg)
+        return None
+    except google_exceptions.GoogleAPIError as e:
+        error_msg = f"Gemini API error during extension: {e}"
+        print(error_msg, file=sys.stderr)
+        show_error("Gemini API Error", error_msg)
+        return None
     except Exception as e:
-        print(f"Error calling Gemini API: {e}", file=sys.stderr)
-        # TODO: Handle specific API errors (rate limits, auth issues) more gracefully.
+        error_msg = f"Unexpected error calling Gemini API for extension: {e}"
+        print(error_msg, file=sys.stderr)
+        show_error("Gemini Error", error_msg)
         return None
 
 
@@ -430,23 +484,52 @@ Generated Notes JSON (for the new complementary track):
         print("--- End Complement Prompt ---")
 
         print("\nCalling Gemini API for complement generation...")
-        response = model.generate_content(prompt) # Consider safety settings if needed
+        # Add safety settings similar to analysis
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+        ]
+        response = model.generate_content(prompt, safety_settings=safety_settings)
         print("Received complement response from Gemini.")
 
-        if response.parts:
-            generated_json_text = response.text
-            print("\n--- Gemini Complement Response Text ---")
-            print(generated_json_text)
-            print("--- End Gemini Complement Response Text ---\n")
-            return generated_json_text
-        else:
-            print("Warning: Gemini complement response did not contain expected parts.", file=sys.stderr)
+        # Check for blocked response *before* accessing parts
+        if not response.parts:
+            block_reason = None
+            safety_feedback = None
             if response.prompt_feedback:
-                print(f"Prompt Feedback: {response.prompt_feedback}", file=sys.stderr)
+                 block_reason = response.prompt_feedback.block_reason
+                 safety_feedback = response.prompt_feedback.safety_ratings
+            error_msg = "Gemini complement response was empty or blocked."
+            if block_reason:
+                error_msg += f" Reason: {block_reason}."
+            if safety_feedback:
+                 error_msg += f" Safety Feedback: {safety_feedback}"
+            print(error_msg, file=sys.stderr)
+            show_error("Gemini Complement Error", error_msg) # Show error in TUI
             return None
 
+        generated_json_text = response.text
+        print("\n--- Gemini Complement Response Text ---")
+        print(generated_json_text)
+        print("--- End Gemini Complement Response Text ---\n")
+        return generated_json_text
+
+    except generation_types.BlockedPromptException as e:
+        error_msg = f"Gemini complement prompt was blocked: {e}"
+        print(error_msg, file=sys.stderr)
+        show_error("Gemini Complement Error", error_msg)
+        return None
+    except google_exceptions.GoogleAPIError as e:
+        error_msg = f"Gemini API error during complement generation: {e}"
+        print(error_msg, file=sys.stderr)
+        show_error("Gemini API Error", error_msg)
+        return None
     except Exception as e:
-        print(f"Error calling Gemini API for complement: {e}", file=sys.stderr)
+        error_msg = f"Unexpected error calling Gemini API for complement: {e}"
+        print(error_msg, file=sys.stderr)
+        show_error("Gemini Error", error_msg)
         return None
 
 
@@ -454,35 +537,47 @@ def parse_gemini_response(json_text: str):
     """
     Cleans and parses the JSON string potentially returned by Gemini.
     Handles potential markdown fences. Returns the parsed Python object (list or dict).
+    Includes more detailed error reporting.
     """
     if not json_text:
         print("Error: Received empty response text from Gemini.", file=sys.stderr)
-        return None
+        return None # Keep returning None on fundamental errors
 
+    cleaned_text = json_text.strip()
     # Attempt to remove markdown code block fences and surrounding whitespace
     # Match ```json ... ``` or just ``` ... ```
-    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', json_text, re.IGNORECASE)
+    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned_text, re.IGNORECASE | re.DOTALL)
     if match:
         cleaned_text = match.group(1).strip()
-    else:
-        # If no markdown found, assume the text is the JSON itself (strip whitespace)
-        cleaned_text = json_text.strip()
+    # else: # If no markdown found, assume the text is the JSON itself (already stripped)
+        # cleaned_text = json_text.strip() # Already done above
 
     if not cleaned_text:
-        print("Error: Cleaned response text is empty.", file=sys.stderr)
+        print("Error: Cleaned response text (after removing potential markdown) is empty.", file=sys.stderr)
+        print(f"Original text was:\n---\n{json_text}\n---", file=sys.stderr)
         return None
 
     try:
         parsed_data = json.loads(cleaned_text)
-        # No longer validating for list type here, could be dict for analysis
         print(f"Successfully parsed JSON data from Gemini response (Type: {type(parsed_data)}).")
         return parsed_data
     except json.JSONDecodeError as e:
-        print(f"Error: Failed to decode JSON from Gemini response: {e}", file=sys.stderr)
-        print(f"Cleaned text was:\n---\n{cleaned_text}\n---", file=sys.stderr)
+        # Provide more context about the decoding error
+        error_msg = f"Error: Failed to decode JSON from Gemini response: {e}. "
+        # Show the position of the error if available
+        error_msg += f"Error at line {e.lineno}, column {e.colno} (char {e.pos})."
+        print(error_msg, file=sys.stderr)
+        # Log the problematic text for debugging
+        print(f"Cleaned text that failed parsing was:\n---\n{cleaned_text}\n---", file=sys.stderr)
+        # Optionally show a simplified error via TUI
+        show_error("JSON Parsing Error", f"Failed to parse Gemini's response.\nDetails: {e}")
         return None
     except Exception as e:
-        print(f"An unexpected error occurred during JSON parsing: {e}", file=sys.stderr)
+        # Catch other potential errors during parsing
+        error_msg = f"An unexpected error occurred during JSON parsing: {e}"
+        print(error_msg, file=sys.stderr)
+        print(f"Cleaned text was:\n---\n{cleaned_text}\n---", file=sys.stderr)
+        show_error("JSON Parsing Error", f"An unexpected error occurred during parsing.\nDetails: {e}")
         return None
 
 
@@ -650,9 +745,10 @@ def main():
             # Pass the dictionary to the TUI function
             show_analysis_results("Gemini Detailed Analysis", analysis_result_data)
         else:
-            # Inform the user analysis failed or wasn't retrieved
-            show_error("Analysis Info", "Could not retrieve or parse detailed analysis from Gemini / Cache.")
-            print("Continuing without displaying detailed analysis.")
+            # Error message is now shown within call_gemini_for_detailed_analysis using show_error
+            print("Continuing without displaying detailed analysis due to previous error.")
+            # Optionally, add a less specific TUI message here if needed, but the specific one is better.
+            # show_error("Analysis Info", "Could not retrieve or parse detailed analysis from Gemini / Cache.")
 
     else:
         error_msg = "Failed to parse MIDI data into JSON."
@@ -672,120 +768,123 @@ def main():
     elif mode == 'complement':
         generated_notes_json_text = call_gemini_for_complement(mvp_json_data, settings['complement_type'])
 
-    if generated_notes_json_text:
-        print(f"Successfully received generation response from Gemini for mode '{mode}'.")
-
-        # --- Parse Gemini Response ---
-        print("\nParsing Gemini response...")
-        # This should now correctly parse the list of notes for generation
-        generated_notes = parse_gemini_response(generated_notes_json_text)
-
-        if isinstance(generated_notes, list): # Check if it's a list for notes
-             # --- Convert to MIDI Events ---
-             start_offset = 0
-             if mode == 'extend':
-                 target_track_index = settings['target_track_index']
-                 # Use the end tick of the selected track
-                 if target_track_index < len(track_end_ticks):
-                     start_offset = track_end_ticks[target_track_index]
-                 else:
-                     # Fallback or error if index is somehow invalid (shouldn't happen with TUI validation)
-                     print(f"Error: Invalid target track index {target_track_index}. Defaulting offset to 0.", file=sys.stderr)
-                     start_offset = 0
-
-             elif mode == 'complement':
-                 start_offset = 0 # New track starts from time 0
-
-             new_midi_events = generated_notes_to_midi_events(generated_notes, start_offset)
-
-             if new_midi_events is not None: # Check if conversion was successful (might return empty list)
-                 # --- Add Events to MIDI File ---
-                 if mode == 'extend':
-                     target_track_index = settings['target_track_index']
-                     print(f"\nAppending {len(new_midi_events)} new events to Track {target_track_index}...")
-                     # Ensure target track index is valid before extending
-                     if 0 <= target_track_index < len(midi_file.tracks):
-                         midi_file.tracks[target_track_index].extend(new_midi_events)
-                         print("Append successful.")
-                     else:
-                          error_msg = f"Error: Invalid target track index {target_track_index} for appending events."
-                          print(error_msg, file=sys.stderr)
-                          show_error("MIDI Error", error_msg)
-                          sys.exit(1)
-
-                 elif mode == 'complement':
-                     # --- Check MIDI type before adding track ---
-                     if midi_file.type == 0:
-                         print("\nWarning: Original MIDI is Type 0. Adding a track requires converting the output file to Type 1.", file=sys.stderr)
-                         midi_file.type = 1 # Change type to allow multiple tracks for saving
-
-                     print(f"\nCreating a new track for the '{settings['complement_type']}' complement...")
-                     new_track = mido.MidiTrack()
-                     midi_file.tracks.append(new_track)
-                     print(f"Appended new Track {len(midi_file.tracks) - 1}.")
-
-                     # Add a program change message at the beginning of the new track
-                     # Determine instrument based on complement type (simple logic for now)
-                     instrument_program = DEFAULT_COMPLEMENT_INSTRUMENT
-                     comp_type_lower = settings['complement_type'].lower()
-                     if "bass" in comp_type_lower:
-                         instrument_program = ACOUSTIC_BASS
-                     elif "harmony" in comp_type_lower or "pad" in comp_type_lower:
-                         instrument_program = 89 # Pad 1 (New Age) - example
-                     elif "melody" in comp_type_lower:
-                         instrument_program = 81 # Lead 1 (Square) - example
-                     # Add more mappings as needed
-
-                     print(f"Setting instrument for new track to Program {instrument_program}.")
-                     # Add program change with delta time 0 at the start
-                     new_track.append(mido.Message('program_change', program=instrument_program, time=0))
-
-                     # Add the generated notes
-                     print(f"Adding {len(new_midi_events)} generated events to the new track...")
-                     new_track.extend(new_midi_events)
-                     print("Events added to new track.")
-
-
-                 # --- Save MIDI File ---
-                 try:
-                     print(f"\nSaving modified MIDI to: {output_midi_path}")
-                     # Ensure the output directory exists
-                     output_dir = os.path.dirname(output_midi_path)
-                     if output_dir and not os.path.exists(output_dir):
-                         os.makedirs(output_dir)
-                         print(f"Created output directory: {output_dir}")
-
-                     midi_file.save(output_midi_path)
-                     success_msg = f"Success! Modified MIDI saved to {output_midi_path}"
-                     # Add note about type change if applicable
-                     if mode == 'complement' and midi_file.type == 1 and len(midi_file.tracks) > 1:
-                         # Check if it *was* type 0 implicitly by checking if we just set it to 1
-                         # A more robust check would involve storing the original type earlier
-                         # For now, assume if it's complement mode, type 1, and >1 track, it was likely converted
-                         success_msg += " (Note: Output file is Type 1)."
-
-                     print(f"\n{success_msg}")
-                     show_success("Operation Successful", success_msg)
-                 except Exception as e:
-                     error_msg = f"Error saving MIDI file: {e}"
-                     print(error_msg, file=sys.stderr)
-                     show_error("Save Error", error_msg)
-                     sys.exit(1)
-
-             else:
-                  error_msg = "Failed to convert generated notes to MIDI events (returned None or error)."
-                  print(error_msg, file=sys.stderr)
-                  show_error("Conversion Error", error_msg)
-                  sys.exit(1)
-        else:
-             error_msg = f"Failed to parse valid list of notes from Gemini generation response. Got type: {type(generated_notes)}"
-             print(error_msg, file=sys.stderr)
-             show_error("Parsing Error", error_msg)
-             sys.exit(1)
-    else:
-        error_msg = f"Failed to get valid generation response from Gemini for mode '{mode}'."
+    # Check if the call itself failed (returned None)
+    if generated_notes_json_text is None:
+        # Specific error should have been shown by the called function via show_error
+        error_msg = f"Failed to get valid generation response from Gemini for mode '{mode}'. See previous errors."
         print(error_msg, file=sys.stderr)
-        show_error("Gemini Error", error_msg)
+        # No need for another show_error here unless the previous one wasn't sufficient
+        sys.exit(1)
+
+    print(f"Successfully received generation response from Gemini for mode '{mode}'.")
+
+    # --- Parse Gemini Response ---
+    print("\nParsing Gemini response...")
+    # This should now correctly parse the list of notes for generation
+    generated_notes = parse_gemini_response(generated_notes_json_text)
+
+    # Check if parsing failed (returned None)
+    if generated_notes is None:
+        # Specific error should have been shown by parse_gemini_response via show_error
+        error_msg = "Failed to parse valid data from Gemini generation response. See previous errors."
+        print(error_msg, file=sys.stderr)
+        # No need for another show_error here
+        sys.exit(1)
+
+    # Check if the parsed data is the expected type (list for notes)
+    if not isinstance(generated_notes, list):
+         error_msg = f"Parsed data from Gemini generation response is not a list of notes. Got type: {type(generated_notes)}"
+         print(error_msg, file=sys.stderr)
+         show_error("Parsing Error", error_msg)
+         sys.exit(1)
+
+    # --- Convert to MIDI Events ---
+    start_offset = 0
+    if mode == 'extend':
+        target_track_index = settings['target_track_index']
+        # Use the end tick of the selected track
+        if target_track_index < len(track_end_ticks):
+            start_offset = track_end_ticks[target_track_index]
+        else:
+            # Fallback or error if index is somehow invalid (shouldn't happen with TUI validation)
+            print(f"Error: Invalid target track index {target_track_index}. Defaulting offset to 0.", file=sys.stderr)
+            start_offset = 0
+
+    elif mode == 'complement':
+        start_offset = 0 # New track starts from time 0
+
+    new_midi_events = generated_notes_to_midi_events(generated_notes, start_offset)
+
+    # --- Add Events to MIDI File ---
+    if mode == 'extend':
+        target_track_index = settings['target_track_index']
+        print(f"\nAppending {len(new_midi_events)} new events to Track {target_track_index}...")
+        # Ensure target track index is valid before extending
+        if 0 <= target_track_index < len(midi_file.tracks):
+            midi_file.tracks[target_track_index].extend(new_midi_events)
+            print("Append successful.")
+        else:
+             error_msg = f"Error: Invalid target track index {target_track_index} for appending events."
+             print(error_msg, file=sys.stderr)
+             show_error("MIDI Error", error_msg)
+             sys.exit(1)
+
+    elif mode == 'complement':
+        # --- Check MIDI type before adding track ---
+        if midi_file.type == 0:
+            print("\nWarning: Original MIDI is Type 0. Adding a track requires converting the output file to Type 1.", file=sys.stderr)
+            midi_file.type = 1 # Change type to allow multiple tracks for saving
+
+        print(f"\nCreating a new track for the '{settings['complement_type']}' complement...")
+        new_track = mido.MidiTrack()
+        midi_file.tracks.append(new_track)
+        print(f"Appended new Track {len(midi_file.tracks) - 1}.")
+
+        # Add a program change message at the beginning of the new track
+        # Determine instrument based on complement type (simple logic for now)
+        instrument_program = DEFAULT_COMPLEMENT_INSTRUMENT
+        comp_type_lower = settings['complement_type'].lower()
+        if "bass" in comp_type_lower:
+            instrument_program = ACOUSTIC_BASS
+        elif "harmony" in comp_type_lower or "pad" in comp_type_lower:
+            instrument_program = 89 # Pad 1 (New Age) - example
+        elif "melody" in comp_type_lower:
+            instrument_program = 81 # Lead 1 (Square) - example
+        # Add more mappings as needed
+
+        print(f"Setting instrument for new track to Program {instrument_program}.")
+        # Add program change with delta time 0 at the start
+        new_track.append(mido.Message('program_change', program=instrument_program, time=0))
+
+        # Add the generated notes
+        print(f"Adding {len(new_midi_events)} generated events to the new track...")
+        new_track.extend(new_midi_events)
+        print("Events added to new track.")
+
+    # --- Save MIDI File ---
+    try:
+        print(f"\nSaving modified MIDI to: {output_midi_path}")
+        # Ensure the output directory exists
+        output_dir = os.path.dirname(output_midi_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            print(f"Created output directory: {output_dir}")
+
+        midi_file.save(output_midi_path)
+        success_msg = f"Success! Modified MIDI saved to {output_midi_path}"
+        # Add note about type change if applicable
+        if mode == 'complement' and midi_file.type == 1 and len(midi_file.tracks) > 1:
+            # Check if it *was* type 0 implicitly by checking if we just set it to 1
+            # A more robust check would involve storing the original type earlier
+            # For now, assume if it's complement mode, type 1, and >1 track, it was likely converted
+            success_msg += " (Note: Output file is Type 1)."
+
+        print(f"\n{success_msg}")
+        show_success("Operation Successful", success_msg)
+    except Exception as e:
+        error_msg = f"Error saving MIDI file: {e}"
+        print(error_msg, file=sys.stderr)
+        show_error("Save Error", error_msg)
         sys.exit(1)
 
 

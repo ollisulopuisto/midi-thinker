@@ -25,3 +25,4 @@
 -   [x] Implement 'Complement' mode (add new track).
 -   [x] Perform detailed analysis via Gemini (key, tempo, time sig, style, harmony).
 -   [x] Display detailed analysis results to the user via TUI before generation.
+-   [/] Robust Error Handling (API errors, blocked prompts, parsing issues). *(Partially addressed)*
