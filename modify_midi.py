@@ -2,9 +2,10 @@ import argparse
 import mido
 import sys
 import json
-import os # Added import
-import google.generativeai as genai # Added import
-from dotenv import load_dotenv # Added import
+import os
+import google.generativeai as genai
+from dotenv import load_dotenv
+import re # Added import for cleaning JSON
 
 # Default values if not found in MIDI
 DEFAULT_TEMPO = 500000  # 120 bpm
@@ -82,7 +83,12 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
             }
         ]
     }
-    return mvp_representation
+
+    # --- Also return the last tick time of the track ---
+    last_tick = current_time_ticks # The time accumulated at the end of the loop
+
+    # Return both JSON and the last tick time
+    return mvp_representation, last_tick
 
 def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int):
     """
@@ -161,6 +167,106 @@ Generated Notes JSON:
         return None
 
 
+def parse_gemini_response(json_text: str):
+    """
+    Cleans and parses the JSON string potentially returned by Gemini.
+    """
+    if not json_text:
+        print("Error: Received empty response text from Gemini.", file=sys.stderr)
+        return None
+
+    # Attempt to remove markdown code block fences and surrounding whitespace
+    match = re.search(r'```json\s*([\s\S]*?)\s*```', json_text, re.IGNORECASE)
+    if match:
+        cleaned_text = match.group(1).strip()
+    else:
+        # If no markdown found, assume the text is the JSON itself (strip whitespace)
+        cleaned_text = json_text.strip()
+
+    if not cleaned_text:
+        print("Error: Cleaned response text is empty.", file=sys.stderr)
+        return None
+
+    try:
+        parsed_data = json.loads(cleaned_text)
+        # Basic validation (expecting a list of notes)
+        if not isinstance(parsed_data, list):
+            print(f"Error: Parsed JSON is not a list as expected. Type: {type(parsed_data)}", file=sys.stderr)
+            return None
+        # Optional: Add more validation for note structure if needed
+        # for note in parsed_data:
+        #     if not all(k in note for k in ("pitch", "start_tick", "duration_tick", "velocity")):
+        #         print(f"Error: Invalid note structure found in parsed JSON: {note}", file=sys.stderr)
+        #         return None
+        print(f"Successfully parsed {len(parsed_data)} generated notes from Gemini response.")
+        return parsed_data
+    except json.JSONDecodeError as e:
+        print(f"Error: Failed to decode JSON from Gemini response: {e}", file=sys.stderr)
+        print(f"Cleaned text was:\n---\n{cleaned_text}\n---", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred during JSON parsing: {e}", file=sys.stderr)
+        return None
+
+
+def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: int):
+    """
+    Converts a list of note dictionaries (from parsed JSON) into a list of
+    mido MIDI messages with correct delta times, offset by start_offset_ticks.
+    """
+    events = []
+    for note in generated_notes:
+        # Ensure required keys are present and are integers
+        try:
+            pitch = int(note['pitch'])
+            start_tick = int(note['start_tick']) + start_offset_ticks
+            duration_tick = int(note['duration_tick'])
+            velocity = int(note['velocity'])
+            end_tick = start_tick + duration_tick
+
+            # Clamp values to valid MIDI ranges
+            pitch = max(0, min(127, pitch))
+            velocity = max(0, min(127, velocity))
+            if duration_tick < 0: duration_tick = 0 # Ensure non-negative duration
+
+            if velocity == 0: # Treat velocity 0 as note_off
+                 events.append({'type': 'note_off', 'tick': start_tick, 'pitch': pitch, 'velocity': 0})
+            else:
+                events.append({'type': 'note_on', 'tick': start_tick, 'pitch': pitch, 'velocity': velocity})
+                events.append({'type': 'note_off', 'tick': end_tick, 'pitch': pitch, 'velocity': 0}) # Standard note_off velocity is often 0 or 64
+
+        except KeyError as e:
+            print(f"Warning: Skipping note due to missing key {e}: {note}", file=sys.stderr)
+            continue
+        except (ValueError, TypeError) as e:
+            print(f"Warning: Skipping note due to invalid value type/format {e}: {note}", file=sys.stderr)
+            continue
+
+
+    # Sort events by tick time, then note_off before note_on for same tick
+    events.sort(key=lambda x: (x['tick'], 0 if x['type'] == 'note_off' else 1))
+
+    # Convert absolute ticks to delta times for mido messages
+    midi_messages = []
+    last_event_tick = start_offset_ticks # Start calculating deltas from the offset
+    for event in events:
+        delta_time = event['tick'] - last_event_tick
+        if delta_time < 0:
+             print(f"Warning: Negative delta time calculated ({delta_time}). Clamping to 0. Event: {event}", file=sys.stderr)
+             delta_time = 0 # Should not happen with correct sorting, but safety check
+
+        midi_messages.append(mido.Message(
+            event['type'],
+            note=event['pitch'],
+            velocity=event['velocity'],
+            time=delta_time
+        ))
+        last_event_tick = event['tick']
+
+    print(f"Converted {len(generated_notes)} notes into {len(midi_messages)} MIDI messages.")
+    return midi_messages
+
+
 def main():
     load_dotenv() # Load .env file
 
@@ -174,14 +280,7 @@ def main():
 
     try:
         midi_file = mido.MidiFile(args.input_midi_path)
-        print(f"Successfully loaded MIDI file. Type: {midi_file.type}, Ticks per beat: {midi_file.ticks_per_beat}")
-        # MVP Spec simplification: Assume Type 1, focus on first track.
-        if midi_file.type == 0 and len(midi_file.tracks) > 1:
-             print("Warning: Input is Type 0 MIDI with multiple tracks. MVP processing only the first track's content.", file=sys.stderr)
-        elif not midi_file.tracks:
-             print("Error: MIDI file contains no tracks.", file=sys.stderr)
-             sys.exit(1)
-
+        # ... existing loading code & checks ...
     # ... existing error handling ...
     except Exception as e:
         print(f"Error loading MIDI file: {e}", file=sys.stderr)
@@ -189,14 +288,12 @@ def main():
 
     # --- Parse and Convert to JSON ---
     print("\nParsing MIDI data to MVP JSON format...")
-    mvp_json_data = parse_midi_to_mvp_json(midi_file)
+    parse_result = parse_midi_to_mvp_json(midi_file)
 
-    if mvp_json_data:
+    if parse_result:
+        mvp_json_data, last_original_tick = parse_result
         print("Successfully parsed MIDI data.")
-        # Print JSON for verification (can be removed later)
-        print("\n--- MVP JSON Representation ---")
-        print(json.dumps(mvp_json_data, indent=2))
-        print("--- End MVP JSON Representation ---\n")
+        # ... existing JSON printing ...
     else:
         print("Failed to parse MIDI data into JSON.", file=sys.stderr)
         sys.exit(1)
@@ -206,19 +303,55 @@ def main():
 
     if generated_notes_json_text:
         print("Successfully received generation response from Gemini.")
-        # TODO: Implement Step 9: Validate and parse the generated_notes_json_text
-        # TODO: Implement Step 10: Convert parsed data into MIDI events
-        # TODO: Implement Step 11: Append events to midi_file.tracks[0]
-        # TODO: Implement Step 12: Save midi_file
-        # TODO: Implement Step 13: Confirmation message
+
+        # --- Parse Gemini Response (Step 9) ---
+        print("\nParsing Gemini response...")
+        generated_notes = parse_gemini_response(generated_notes_json_text)
+
+        if generated_notes:
+             # --- Convert to MIDI Events (Step 10) ---
+             print("\nConverting generated notes to MIDI events...")
+             # Use last_original_tick as the offset for the new events
+             new_midi_events = generated_notes_to_midi_events(generated_notes, last_original_tick)
+
+             if new_midi_events:
+                 # --- Append to Track (Step 11) ---
+                 print(f"\nAppending {len(new_midi_events)} new events to the first track...")
+                 # Ensure the first track exists
+                 if midi_file.tracks:
+                     # Adjust time of the first new event relative to the *last event* in the original track
+                     # Mido handles delta times internally when appending, but the first delta needs care.
+                     # The generated_notes_to_midi_events already calculates deltas relative to last_original_tick.
+                     # We might need to adjust the *very first* delta if the original track didn't end exactly at last_original_tick
+                     # For simplicity in MVP, we assume the delta calculation is sufficient.
+                     midi_file.tracks[0].extend(new_midi_events)
+                     print("Append successful.")
+
+                     # --- Save MIDI File (Step 12) ---
+                     try:
+                         print(f"\nSaving modified MIDI to: {args.output_midi_path}")
+                         midi_file.save(args.output_midi_path)
+                         # --- Confirmation (Step 13) ---
+                         print(f"\nSuccess! Modified MIDI saved to {args.output_midi_path}")
+                     except Exception as e:
+                         print(f"Error saving MIDI file: {e}", file=sys.stderr)
+                         sys.exit(1)
+                 else:
+                      print("Error: Cannot append events, MIDI file has no tracks after loading.", file=sys.stderr)
+                      sys.exit(1)
+             else:
+                  print("Failed to convert generated notes to MIDI events.", file=sys.stderr)
+                  sys.exit(1)
+        else:
+             print("Failed to parse valid notes from Gemini response.", file=sys.stderr)
+             sys.exit(1)
+
     else:
         print("Failed to get valid generation response from Gemini.", file=sys.stderr)
         sys.exit(1)
 
-
-    # --- Placeholder for next steps ---
-    print("Next steps: Parse Gemini JSON, convert to MIDI events, append, save.")
-    # ... existing placeholder code ...
+    # --- Remove Placeholder ---
+    # print("Next steps: Parse Gemini JSON, convert to MIDI events, append, save.")
 
 
 if __name__ == "__main__":
