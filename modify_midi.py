@@ -90,6 +90,77 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
     # Return both JSON and the last tick time
     return mvp_representation, last_tick
 
+def call_gemini_for_analysis(mvp_json_data: dict):
+    """
+    (Optional MVP Step 5)
+    Constructs a prompt and calls the Gemini API to analyze tempo and key.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        # Don't treat as fatal error for optional step, just warn.
+        print("Warning: GEMINI_API_KEY not found. Skipping optional analysis step.", file=sys.stderr)
+        return
+
+    try:
+        genai.configure(api_key=api_key)
+        # Use a model suitable for analysis, flash might be sufficient
+        model = genai.GenerativeModel('gemini-1.5-flash')
+
+        # --- Construct the Analysis Prompt ---
+        # Calculate BPM from tempo (microseconds per beat) for better readability in prompt/output
+        tempo_microseconds = mvp_json_data.get('tempo', DEFAULT_TEMPO)
+        bpm = round(60_000_000 / tempo_microseconds) if tempo_microseconds > 0 else "N/A"
+
+        prompt = f"""
+You are a MIDI music analysis assistant.
+Analyze the provided musical data in JSON format, focusing on the first track.
+The JSON includes notes, the initially detected tempo ({tempo_microseconds} microseconds per beat, approx {bpm} BPM),
+and the initially detected key signature ('{mvp_json_data.get('key_signature', DEFAULT_KEY)}').
+
+Input Data:
+```json
+{json.dumps(mvp_json_data, indent=2)}
+```
+
+Based *primarily* on the note data provided, please confirm or correct:
+1. The most likely Key Signature.
+2. The primary Tempo in BPM (Beats Per Minute). You can use the provided tempo as a strong hint.
+
+Output your answer concisely in the format:
+"Key Signature: [Your Identified Key], Tempo: [Your Calculated BPM] BPM"
+
+Analysis Result:
+"""
+        print("\n--- Sending Analysis Prompt to Gemini (Optional Step 5) ---")
+        # print(prompt) # Uncomment to debug the prompt
+        print("--- End Analysis Prompt ---")
+
+        # --- Call Gemini API ---
+        print("\nCalling Gemini API for analysis...")
+        # Add safety settings to potentially reduce refusals for simple analysis
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+        ]
+        response = model.generate_content(prompt, safety_settings=safety_settings)
+        print("Received analysis response from Gemini.")
+
+        if response.parts:
+            analysis_text = response.text
+            print("\n--- Gemini Analysis Result ---")
+            print(analysis_text.strip())
+            print("--- End Gemini Analysis Result ---\n")
+        else:
+            print("Warning: Gemini analysis response did not contain expected parts.", file=sys.stderr)
+            if response.prompt_feedback:
+                print(f"Prompt Feedback: {response.prompt_feedback}", file=sys.stderr)
+
+    except Exception as e:
+        print(f"Warning: Error during optional Gemini analysis step: {e}", file=sys.stderr)
+
+
 def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int):
     """
     Constructs a prompt and calls the Gemini API to generate extended notes.
@@ -295,7 +366,14 @@ def main():
     if parse_result:
         mvp_json_data, last_original_tick = parse_result
         print("Successfully parsed MIDI data.")
-        # ... existing JSON printing ...
+        # Optionally print the JSON data for debugging
+        # print("\n--- MVP JSON Representation ---")
+        # print(json.dumps(mvp_json_data, indent=2))
+        # print("--- End JSON Representation ---\n")
+
+        # --- Optional Analysis Step (MVP Step 5) ---
+        call_gemini_for_analysis(mvp_json_data)
+
     else:
         print("Failed to parse MIDI data into JSON.", file=sys.stderr)
         sys.exit(1)
