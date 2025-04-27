@@ -11,6 +11,10 @@ import re # Added import for cleaning JSON
 DEFAULT_TEMPO = 500000  # 120 bpm
 DEFAULT_KEY = "Cmaj"
 DEFAULT_TIME_SIGNATURE = {"numerator": 4, "denominator": 4} # Add default time signature
+# Instrument program numbers (General MIDI)
+DEFAULT_INSTRUMENT = 0 # Acoustic Grand Piano
+ACOUSTIC_BASS = 32
+DEFAULT_COMPLEMENT_INSTRUMENT = ACOUSTIC_BASS
 
 def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
     """
@@ -116,7 +120,7 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
 
 def call_gemini_for_analysis(mvp_json_data: dict):
     """
-    (Optional MVP Step 5)
+    (Optional MVP Step 5 - Basic Analysis)
     Constructs a prompt and calls the Gemini API to analyze tempo and key.
     """
     api_key = os.getenv("GEMINI_API_KEY")
@@ -183,6 +187,76 @@ Analysis Result:
 
     except Exception as e:
         print(f"Warning: Error during optional Gemini analysis step: {e}", file=sys.stderr)
+
+
+def call_gemini_for_detailed_analysis(mvp_json_data: dict):
+    """
+    (Post-MVP)
+    Constructs a prompt and calls the Gemini API for more detailed analysis.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("Warning: GEMINI_API_KEY not found. Skipping detailed analysis.", file=sys.stderr)
+        return
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash') # Flash is likely sufficient
+
+        # Calculate BPM for prompt context
+        tempo_microseconds = mvp_json_data.get('tempo', DEFAULT_TEMPO)
+        bpm = round(60_000_000 / tempo_microseconds) if tempo_microseconds > 0 else "N/A"
+        key_signature = mvp_json_data.get('key_signature', DEFAULT_KEY)
+        time_signature = mvp_json_data.get('time_signature', DEFAULT_TIME_SIGNATURE)
+        ts_str = f"{time_signature.get('numerator', 4)}/{time_signature.get('denominator', 4)}"
+
+        prompt = f"""
+You are an expert MIDI music analyst.
+Analyze the provided musical data in JSON format, which contains multiple tracks with notes and instrument information.
+
+Input Data:
+```json
+{json.dumps(mvp_json_data, indent=2)}
+```
+
+Based on the provided data (especially the notes across all tracks):
+1.  **Key Signature:** Confirm or identify the most likely overall key signature.
+2.  **Tempo:** Confirm or identify the primary tempo in BPM.
+3.  **Time Signature:** Confirm the primary time signature ({ts_str} was detected initially).
+4.  **Musical Style/Genre:** Briefly describe the likely musical style or genre (e.g., Classical, Jazz, Pop Ballad, Electronic).
+5.  **Harmony:** Briefly describe the basic harmonic structure if discernible (e.g., Simple diatonic chords, Modal, Complex jazz harmony).
+
+Output your analysis clearly, addressing each point.
+
+Detailed Analysis:
+"""
+        print("\n--- Sending Detailed Analysis Prompt to Gemini ---")
+        # print(prompt) # Uncomment to debug
+        print("--- End Detailed Analysis Prompt ---")
+
+        print("\nCalling Gemini API for detailed analysis...")
+        # Use safety settings similar to basic analysis
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+        ]
+        response = model.generate_content(prompt, safety_settings=safety_settings)
+        print("Received detailed analysis response from Gemini.")
+
+        if response.parts:
+            analysis_text = response.text
+            print("\n--- Gemini Detailed Analysis Result ---")
+            print(analysis_text.strip())
+            print("--- End Gemini Detailed Analysis Result ---\n")
+        else:
+            print("Warning: Gemini detailed analysis response did not contain expected parts.", file=sys.stderr)
+            if response.prompt_feedback:
+                print(f"Prompt Feedback: {response.prompt_feedback}", file=sys.stderr)
+
+    except Exception as e:
+        print(f"Warning: Error during detailed Gemini analysis step: {e}", file=sys.stderr)
 
 
 def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int):
@@ -277,6 +351,92 @@ Generated Notes JSON (for Track 0):
         return None
 
 
+def call_gemini_for_complement(mvp_json_data: dict, complement_type: str):
+    """
+    (Post-MVP)
+    Constructs a prompt and calls the Gemini API to generate a new complementary track.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("Error: GEMINI_API_KEY not found in environment variables.", file=sys.stderr)
+        print("Please create a .env file with your key (see .env.template).", file=sys.stderr)
+        return None
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash') # Or pro for potentially better musicality
+
+        # Basic context for the prompt
+        key_signature = mvp_json_data.get('key_signature', DEFAULT_KEY)
+        tempo_microseconds = mvp_json_data.get('tempo', DEFAULT_TEMPO)
+        bpm = round(60_000_000 / tempo_microseconds) if tempo_microseconds > 0 else "N/A"
+
+        # Define the generation request based on complement_type
+        generation_request = f"Generate a new musical part to complement the existing tracks. The new part should be a '{complement_type}'."
+        if "bassline" in complement_type.lower():
+             generation_request += " Focus on lower registers and provide harmonic support."
+        elif "harmony" in complement_type.lower():
+             generation_request += " Focus on chords or pads that fit the existing harmony."
+        elif "counter-melody" in complement_type.lower():
+             generation_request += " Create an independent melodic line that interacts interestingly with the existing melody/melodies."
+        else:
+             generation_request += " Generate notes that musically fit well with the existing material."
+
+
+        prompt = f"""
+You are a MIDI music composition assistant.
+Analyze the provided musical data (JSON format, multiple tracks).
+Generate a *new* musical part as specified in the request.
+
+Input Data (Multiple Tracks):
+```json
+{json.dumps(mvp_json_data, indent=2)}
+```
+
+Request: {generation_request}
+The piece is in {key_signature} at approximately {bpm} BPM.
+
+Output ONLY the JSON representation of the *new* notes for the *new* complementary track.
+The JSON should be a list of note objects, each with "pitch", "start_tick", "duration_tick", and "velocity".
+The "start_tick" for the new notes should be relative to the beginning of the piece (i.e., start from 0 or a small positive value, aligning with the original structure).
+Do not include the original notes in the output.
+Ensure the output is valid JSON.
+
+Example output format for the new complementary track:
+```json
+[
+  {{ "pitch": 48, "start_tick": 0, "duration_tick": 960, "velocity": 80 }},
+  {{ "pitch": 50, "start_tick": 960, "duration_tick": 960, "velocity": 80 }}
+]
+```
+
+Generated Notes JSON (for the new complementary track):
+"""
+        print("\n--- Sending Complement Prompt to Gemini ---")
+        # print(prompt) # Uncomment to debug
+        print("--- End Complement Prompt ---")
+
+        print("\nCalling Gemini API for complement generation...")
+        response = model.generate_content(prompt) # Consider safety settings if needed
+        print("Received complement response from Gemini.")
+
+        if response.parts:
+            generated_json_text = response.text
+            print("\n--- Gemini Complement Response Text ---")
+            print(generated_json_text)
+            print("--- End Gemini Complement Response Text ---\n")
+            return generated_json_text
+        else:
+            print("Warning: Gemini complement response did not contain expected parts.", file=sys.stderr)
+            if response.prompt_feedback:
+                print(f"Prompt Feedback: {response.prompt_feedback}", file=sys.stderr)
+            return None
+
+    except Exception as e:
+        print(f"Error calling Gemini API for complement: {e}", file=sys.stderr)
+        return None
+
+
 def parse_gemini_response(json_text: str):
     """
     Cleans and parses the JSON string potentially returned by Gemini.
@@ -323,6 +483,7 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
     """
     Converts a list of note dictionaries (from parsed JSON) into a list of
     mido MIDI messages with correct delta times, offset by start_offset_ticks.
+    Handles potential errors in note data gracefully.
     """
     events = []
     for note in generated_notes:
@@ -380,20 +541,51 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
 def main():
     load_dotenv() # Load .env file
 
-    parser = argparse.ArgumentParser(description="Modify a MIDI file using Gemini.")
-    # Add input and output path arguments
+    parser = argparse.ArgumentParser(description="Modify or extend a MIDI file using Gemini.")
     parser.add_argument("input_midi_path", type=str, help="Path to the input MIDI file.")
     parser.add_argument("output_midi_path", type=str, help="Path to save the modified MIDI file.")
-    parser.add_argument("bars_to_extend", type=int, help="Number of bars to extend the first track by.") # Keep help text simple
+    parser.add_argument("--mode", type=str, choices=['extend', 'complement'], default='extend',
+                        help="Operation mode: 'extend' the first track or add a 'complement' track (default: extend).")
+    # Arguments specific to 'extend' mode
+    parser.add_argument("--bars_to_extend", type=int, default=4,
+                        help="Number of bars to extend the first track by (used only if mode is 'extend').")
+    # Arguments specific to 'complement' mode
+    parser.add_argument("--complement_type", type=str, default="bassline",
+                        help="Type of complementary part to generate (e.g., 'bassline', 'harmony', 'counter-melody') (used only if mode is 'complement').")
+
 
     args = parser.parse_args()
 
+    # Validate arguments based on mode
+    if args.mode == 'extend' and args.bars_to_extend <= 0:
+        print("Error: --bars_to_extend must be positive for 'extend' mode.", file=sys.stderr)
+        sys.exit(1)
+    # No specific validation needed for complement_type yet
+
     print(f"Loading MIDI file: {args.input_midi_path}")
+    print(f"Mode: {args.mode}")
+    if args.mode == 'extend':
+        print(f"Bars to extend: {args.bars_to_extend}")
+    elif args.mode == 'complement':
+        print(f"Complement type: {args.complement_type}")
+
 
     try:
         midi_file = mido.MidiFile(args.input_midi_path)
-        # ... existing loading code & checks ...
-    # ... existing error handling ...
+        # Basic check: Does it have tracks?
+        if not midi_file.tracks:
+             print(f"Error: Input MIDI file '{args.input_midi_path}' contains no tracks.", file=sys.stderr)
+             sys.exit(1)
+        # Check MIDI type (informational)
+        print(f"MIDI Type: {midi_file.type}")
+        if midi_file.type == 0 and len(midi_file.tracks) > 1:
+            print("Warning: Type 0 MIDI file with multiple tracks found. Treating as a single logical track.", file=sys.stderr)
+        elif midi_file.type == 2:
+             print("Warning: Type 2 MIDI files are not fully supported. Results may be unpredictable.", file=sys.stderr)
+
+    except FileNotFoundError:
+        print(f"Error: Input MIDI file not found at '{args.input_midi_path}'", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         print(f"Error loading MIDI file: {e}", file=sys.stderr)
         sys.exit(1)
@@ -403,71 +595,113 @@ def main():
     parse_result = parse_midi_to_mvp_json(midi_file)
 
     if parse_result:
-        mvp_json_data, last_original_tick_first_track = parse_result # Renamed variable
+        mvp_json_data, last_original_tick_first_track = parse_result
         print("Successfully parsed MIDI data.")
         # Optionally print the JSON data for debugging
         # print("\n--- MVP JSON Representation ---")
         # print(json.dumps(mvp_json_data, indent=2))
         # print("--- End JSON Representation ---\n")
 
-        # --- Optional Analysis Step (MVP Step 5) ---
-        # Analysis prompt currently only uses global tempo/key, doesn't need change yet
-        call_gemini_for_analysis(mvp_json_data)
+        # --- Optional Basic Analysis Step (MVP Step 5) ---
+        # call_gemini_for_analysis(mvp_json_data) # Keep or remove as desired
+
+        # --- Detailed Analysis Step (Post-MVP) ---
+        call_gemini_for_detailed_analysis(mvp_json_data)
 
     else:
         print("Failed to parse MIDI data into JSON.", file=sys.stderr)
         sys.exit(1)
 
-    # --- Call Gemini for Generation ---
-    # Pass the full JSON data, but generation targets the first track
-    generated_notes_json_text = call_gemini_for_extension(mvp_json_data, args.bars_to_extend)
+
+    # --- Call Gemini for Generation based on mode ---
+    generated_notes_json_text = None
+    if args.mode == 'extend':
+        generated_notes_json_text = call_gemini_for_extension(mvp_json_data, args.bars_to_extend)
+    elif args.mode == 'complement':
+        generated_notes_json_text = call_gemini_for_complement(mvp_json_data, args.complement_type)
 
     if generated_notes_json_text:
-        print("Successfully received generation response from Gemini.")
+        print(f"Successfully received generation response from Gemini for mode '{args.mode}'.")
 
-        # --- Parse Gemini Response (Step 9) ---
+        # --- Parse Gemini Response ---
         print("\nParsing Gemini response...")
         generated_notes = parse_gemini_response(generated_notes_json_text)
 
         if generated_notes:
-             # --- Convert to MIDI Events (Step 10) ---
+             # --- Convert to MIDI Events ---
              print("\nConverting generated notes to MIDI events...")
-             # Use last_original_tick_first_track as the offset for the new events
-             new_midi_events = generated_notes_to_midi_events(generated_notes, last_original_tick_first_track) # Use renamed variable
+             start_offset = 0
+             if args.mode == 'extend':
+                 start_offset = last_original_tick_first_track # Append after original track 0 content
+             elif args.mode == 'complement':
+                 start_offset = 0 # New track starts from time 0
 
-             if new_midi_events:
-                 # --- Append to Track (Step 11) ---
-                 # Still appending only to the first track for "Extend"
-                 print(f"\nAppending {len(new_midi_events)} new events to the first track (Track 0)...")
-                 if midi_file.tracks:
-                     midi_file.tracks[0].extend(new_midi_events)
-                     print("Append successful.")
+             new_midi_events = generated_notes_to_midi_events(generated_notes, start_offset)
 
-                     # --- Save MIDI File (Step 12) ---
-                     try:
-                         print(f"\nSaving modified MIDI to: {args.output_midi_path}")
-                         midi_file.save(args.output_midi_path)
-                         # --- Confirmation (Step 13) ---
-                         print(f"\nSuccess! Modified MIDI saved to {args.output_midi_path}")
-                     except Exception as e:
-                         print(f"Error saving MIDI file: {e}", file=sys.stderr)
-                         sys.exit(1)
-                 else:
-                      print("Error: Cannot append events, MIDI file has no tracks after loading.", file=sys.stderr)
-                      sys.exit(1)
+             if new_midi_events is not None: # Check if conversion was successful (might return empty list)
+                 # --- Add Events to MIDI File ---
+                 if args.mode == 'extend':
+                     print(f"\nAppending {len(new_midi_events)} new events to the first track (Track 0)...")
+                     if midi_file.tracks:
+                         midi_file.tracks[0].extend(new_midi_events)
+                         print("Append successful.")
+                     else:
+                          # This check should be redundant due to earlier check, but good practice
+                          print("Error: Cannot append events, MIDI file has no tracks.", file=sys.stderr)
+                          sys.exit(1)
+
+                 elif args.mode == 'complement':
+                     print(f"\nCreating a new track for the '{args.complement_type}' complement...")
+                     new_track = mido.MidiTrack()
+                     midi_file.tracks.append(new_track)
+                     print(f"Appended new Track {len(midi_file.tracks) - 1}.")
+
+                     # Add a program change message at the beginning of the new track
+                     # Determine instrument based on complement type (simple logic for now)
+                     instrument_program = DEFAULT_COMPLEMENT_INSTRUMENT
+                     if "bass" in args.complement_type.lower():
+                         instrument_program = ACOUSTIC_BASS
+                     elif "harmony" in args.complement_type.lower():
+                         instrument_program = 89 # Pad 1 (New Age) - example
+                     elif "melody" in args.complement_type.lower():
+                         instrument_program = 81 # Lead 1 (Square) - example
+                     # Add more mappings as needed
+
+                     print(f"Setting instrument for new track to Program {instrument_program}.")
+                     # Add program change with delta time 0 at the start
+                     new_track.append(mido.Message('program_change', program=instrument_program, time=0))
+
+                     # Add the generated notes
+                     print(f"Adding {len(new_midi_events)} generated events to the new track...")
+                     new_track.extend(new_midi_events)
+                     print("Events added to new track.")
+
+
+                 # --- Save MIDI File ---
+                 try:
+                     print(f"\nSaving modified MIDI to: {args.output_midi_path}")
+                     # Ensure the output directory exists
+                     output_dir = os.path.dirname(args.output_midi_path)
+                     if output_dir and not os.path.exists(output_dir):
+                         os.makedirs(output_dir)
+                         print(f"Created output directory: {output_dir}")
+
+                     midi_file.save(args.output_midi_path)
+                     print(f"\nSuccess! Modified MIDI saved to {args.output_midi_path}")
+                 except Exception as e:
+                     print(f"Error saving MIDI file: {e}", file=sys.stderr)
+                     sys.exit(1)
+
              else:
-                  print("Failed to convert generated notes to MIDI events.", file=sys.stderr)
+                  print("Failed to convert generated notes to MIDI events (returned None or error).", file=sys.stderr)
                   sys.exit(1)
         else:
              print("Failed to parse valid notes from Gemini response.", file=sys.stderr)
              sys.exit(1)
 
     else:
-        print("Failed to get valid generation response from Gemini.", file=sys.stderr)
+        print(f"Failed to get valid generation response from Gemini for mode '{args.mode}'.", file=sys.stderr)
         sys.exit(1)
-
-    # --- Remove Placeholder ---
-    # print("Next steps: Parse Gemini JSON, convert to MIDI events, append, save.")
 
 
 if __name__ == "__main__":
