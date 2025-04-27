@@ -138,6 +138,7 @@ def show_success(title, text):
 def show_analysis_results(title: str, analysis_data: dict | None):
     """
     Displays the structured analysis results from a dictionary in a message dialog.
+    Formats the output as plain text key-value pairs.
 
     Args:
         title (str): The title for the dialog window.
@@ -148,8 +149,8 @@ def show_analysis_results(title: str, analysis_data: dict | None):
     if not analysis_data or not isinstance(analysis_data, dict):
         display_text = "Analysis data is not available or is in an invalid format."
     else:
-        # Format the dictionary into a readable string
-        lines = [f"## {title}\n"] # Add title as header
+        # Format the dictionary into a readable plain text string
+        lines = []
         # Define the desired order and friendly names for keys
         display_order = {
             "key_signature": "Key Signature",
@@ -160,16 +161,17 @@ def show_analysis_results(title: str, analysis_data: dict | None):
         }
         for key, friendly_name in display_order.items():
             value = analysis_data.get(key, "N/A") # Get value or default to "N/A"
-            lines.append(f"**{friendly_name}:** {value}")
+            # Simple key: value format
+            lines.append(f"{friendly_name}: {value}")
 
         # Add any extra keys found in the data that weren't in the display_order
         for key, value in analysis_data.items():
             if key not in display_order:
                  # Simple formatting for unexpected keys
                  friendly_name = key.replace('_', ' ').title()
-                 lines.append(f"**{friendly_name}:** {value}")
+                 lines.append(f"{friendly_name}: {value}")
 
-        display_text = "\n\n".join(lines) # Join lines with double newline for spacing
+        display_text = "\n".join(lines) # Join lines with single newline
 
     # Use message_dialog which handles multi-line text well
     message_dialog(title=title, text=display_text).run()
