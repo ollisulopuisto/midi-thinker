@@ -4,8 +4,8 @@
 
 -   [x] 1. User executes script: `python modify_midi.py <input_midi_path> <output_midi_path> <bars_to_extend>` (Argument parsing)
 -   [x] 2. Program loads `<input_midi_path>` using `mido`.
--   [ ] 3. Program performs basic parsing (first track notes, first tempo, first key signature).
--   [ ] 4. Program converts this minimal data into MVP JSON format.
+-   [x] 3. Program performs basic parsing (first track notes, first tempo, first key signature).
+-   [x] 4. Program converts this minimal data into MVP JSON format.
 -   [ ] 5. (Optional) Program sends JSON to Gemini for basic analysis (confirm key/tempo).
 -   [ ] 6. Program constructs a generation prompt for Gemini (original notes JSON, key, tempo, extend request).
 -   [ ] 7. Program sends the generation prompt to Gemini.
