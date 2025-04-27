@@ -127,10 +127,16 @@ def get_user_input(input_path: str, num_tracks: int):
 
 def show_error(title, text):
     """Displays an error message dialog."""
-    message_dialog(title=title, text=text, style='class:error').run()
+    # Remove the style argument to avoid the AttributeError
+    message_dialog(title=title, text=text).run()
 
 def show_success(title, text):
     """Displays a success message dialog."""
+    message_dialog(title=title, text=text).run()
+
+def show_analysis_results(title, text):
+    """Displays the analysis results in a message dialog."""
+    # Use message_dialog which handles multi-line text well
     message_dialog(title=title, text=text).run()
 
 # Example usage (for testing tui.py directly)

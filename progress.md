@@ -17,3 +17,11 @@
 -   [x] 13. Program confirms success and provides the output file path.
 
 **Note:** All core MVP steps are implemented. Further refinement, especially in prompt engineering (Step 6 - calculating extension length more precisely, improving style matching) and error handling, is needed for better results.
+
+## Post-MVP Enhancements
+
+-   [x] Implement TUI for user interaction (file selection, mode, parameters).
+-   [x] Parse all tracks (notes, first program change) for context.
+-   [x] Implement 'Complement' mode (add new track).
+-   [x] Perform detailed analysis via Gemini (key, tempo, time sig, style, harmony).
+-   [x] Display detailed analysis results to the user via TUI before generation.

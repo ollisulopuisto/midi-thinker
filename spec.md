@@ -91,21 +91,21 @@ This project aims to create a tool that leverages the Gemini API to analyze and 
     *   Detailed harmonic analysis (chord progressions with timing, inversions, extensions). *(Now possible with multi-track JSON)*
     *   Musical style/genre identification. *(Now possible with multi-track JSON)*
 *   **Advanced User Interaction:**
-    *   Display detailed analysis results.
-    *   Implement **Complement** modification type (bass lines, harmony, counter-melody).
-    *   Allow selection of specific tracks for analysis/modification. *(Prerequisite: Multi-track parsing done)*
+    *   Display detailed analysis results. *(Implemented: Analysis text shown in TUI)*
+    *   Implement **Complement** modification type (bass lines, harmony, counter-melody). *(Implemented: Basic complement mode via TUI)*
+    *   Allow selection of specific tracks for analysis/modification. *(Implemented: Track selection for 'Extend' mode via TUI)*
     *   Structured parameter input (dropdowns, fields for style, part type, variations).
 *   **Advanced Generation (via Gemini):**
-    *   Generate specific complementary parts.
+    *   Generate specific complementary parts. *(Partially addressed: Basic complement type input)*
     *   Control over instrumentation, dynamics, rhythm. *(Prerequisite: Instrument parsing done)*
     *   Generate variations based on style.
-    *   Handle multi-track generation. *(Partially addressed: Context used, generation still single-track)*
+    *   Handle multi-track generation. *(Partially addressed: Context used, generation still single-track or new track)*
 *   **Intelligent MIDI Output:**
-    *   Add generated parts as *new* tracks for "Complement".
+    *   Add generated parts as *new* tracks for "Complement". *(Implemented)*
     *   Integrate generated tempo/key/time signature changes.
-    *   Handle program changes for generated tracks. *(Prerequisite: Instrument parsing done)*
+    *   Handle program changes for generated tracks. *(Partially addressed: Basic instrument setting for complement track)*
 *   **Refined Data Representation:** Develop a more comprehensive JSON structure for Gemini to handle the complexity above. *(Partially addressed: Multi-track notes, instrument)*
-*   **Improved Prompt Engineering:** Iteratively refine prompts for better musical coherence, quality, and control. *(Partially addressed: More precise extension length, multi-track context)*
+*   **Improved Prompt Engineering:** Iteratively refine prompts for better musical coherence, quality, and control. *(Partially addressed: More precise extension length, multi-track context, complement type hints)*
 *   **Context Window Management:** Decide how much context (whole piece vs. recent bars) to provide Gemini.
 *   **Robust Error Handling:** Handle diverse MIDI file issues, API limits, musically nonsensical output.
 *   **Evaluation:** Develop methods (potentially simple rule-based checks or subjective listening tests) to evaluate output quality.

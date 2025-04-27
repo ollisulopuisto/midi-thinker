@@ -6,7 +6,7 @@ import argparse # Re-add argparse
 import google.generativeai as genai
 from dotenv import load_dotenv
 import re # Added import for cleaning JSON
-from tui import get_user_input, select_input_file, show_error, show_success # Import TUI functions
+from tui import get_user_input, select_input_file, show_error, show_success, show_analysis_results # Import TUI functions including show_analysis_results
 
 # Default values if not found in MIDI
 DEFAULT_TEMPO = 500000  # 120 bpm
@@ -191,11 +191,12 @@ def call_gemini_for_detailed_analysis(mvp_json_data: dict):
     """
     (Post-MVP)
     Constructs a prompt and calls the Gemini API for more detailed analysis.
+    Returns the analysis text or None if an error occurs.
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("Warning: GEMINI_API_KEY not found. Skipping detailed analysis.", file=sys.stderr)
-        return
+        return None # Return None
 
     try:
         genai.configure(api_key=api_key)
@@ -244,17 +245,20 @@ Detailed Analysis:
         print("Received detailed analysis response from Gemini.")
 
         if response.parts:
-            analysis_text = response.text
+            analysis_text = response.text.strip() # Strip whitespace
             print("\n--- Gemini Detailed Analysis Result ---")
-            print(analysis_text.strip())
+            print(analysis_text)
             print("--- End Gemini Detailed Analysis Result ---\n")
+            return analysis_text # Return the analysis text
         else:
             print("Warning: Gemini detailed analysis response did not contain expected parts.", file=sys.stderr)
             if response.prompt_feedback:
                 print(f"Prompt Feedback: {response.prompt_feedback}", file=sys.stderr)
+            return None # Return None
 
     except Exception as e:
         print(f"Warning: Error during detailed Gemini analysis step: {e}", file=sys.stderr)
+        return None # Return None
 
 
 def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_index: int):
@@ -636,7 +640,18 @@ def main():
         # call_gemini_for_analysis(mvp_json_data) # Keep or remove as desired
 
         # --- Detailed Analysis Step (Post-MVP) ---
-        call_gemini_for_detailed_analysis(mvp_json_data)
+        print("\nRequesting detailed analysis from Gemini...")
+        analysis_result_text = call_gemini_for_detailed_analysis(mvp_json_data)
+
+        # --- Show Analysis Results to User ---
+        if analysis_result_text:
+            print("Displaying analysis results...")
+            show_analysis_results("Gemini Detailed Analysis", analysis_result_text)
+        else:
+            # Optionally inform the user analysis failed but continue anyway
+            show_error("Analysis Info", "Could not retrieve detailed analysis from Gemini.")
+            print("Continuing without displaying detailed analysis.")
+
 
     else:
         error_msg = "Failed to parse MIDI data into JSON."
