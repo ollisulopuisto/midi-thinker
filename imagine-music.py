@@ -2,10 +2,11 @@ import mido
 import sys
 import json
 import os
+import argparse # Re-add argparse
 import google.generativeai as genai
 from dotenv import load_dotenv
 import re # Added import for cleaning JSON
-from tui import get_user_input, show_error, show_success # Import TUI functions
+from tui import get_user_input, select_input_file, show_error, show_success # Import TUI functions
 
 # Default values if not found in MIDI
 DEFAULT_TEMPO = 500000  # 120 bpm
@@ -541,23 +542,49 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
 def main():
     load_dotenv() # Load .env file
 
-    # --- Get User Input via TUI ---
-    settings = get_user_input()
+    # --- Argument Parsing for Optional Input File ---
+    parser = argparse.ArgumentParser(
+        description="Modify or extend a MIDI file using Gemini, with TUI for settings.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument(
+        "-i", "--input",
+        type=str,
+        help="Optional: Path to the input MIDI file. If not provided, a file selector will be shown."
+    )
+    args = parser.parse_args()
+
+    # --- Determine Input Path (CLI or TUI) ---
+    input_midi_path = args.input
+    if not input_midi_path:
+        print("Input file not provided via command line, launching file selector...")
+        input_midi_path = select_input_file()
+        if not input_midi_path:
+            print("Operation cancelled by user during file selection.")
+            sys.exit(0)
+        print(f"Selected input file: {input_midi_path}")
+    else:
+        print(f"Using input file from command line: {input_midi_path}")
+
+
+    # --- Get Remaining User Input via TUI ---
+    # Pass the determined input_midi_path to the TUI function
+    settings = get_user_input(input_midi_path)
     if not settings:
-        print("Operation cancelled by user.")
+        print("Operation cancelled by user during settings input.")
         sys.exit(0)
 
-    input_midi_path = settings['input_path']
+    # Combine input path with other settings
+    settings['input_path'] = input_midi_path
     output_midi_path = settings['output_path']
     mode = settings['mode']
 
-    print(f"Loading MIDI file: {input_midi_path}")
+    print(f"\nLoading MIDI file: {input_midi_path}")
     print(f"Mode: {mode}")
     if mode == 'extend':
         print(f"Bars to extend: {settings['bars_to_extend']}")
     elif mode == 'complement':
         print(f"Complement type: {settings['complement_type']}")
-
 
     try:
         midi_file = mido.MidiFile(input_midi_path)
@@ -706,7 +733,6 @@ def main():
              print(error_msg, file=sys.stderr)
              show_error("Parsing Error", error_msg)
              sys.exit(1)
-
     else:
         error_msg = f"Failed to get valid generation response from Gemini for mode '{mode}'."
         print(error_msg, file=sys.stderr)

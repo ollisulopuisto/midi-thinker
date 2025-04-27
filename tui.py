@@ -24,31 +24,43 @@ class NotEmptyValidator(Validator):
                 message='This field cannot be empty',
                 cursor_position=len(text))
 
-def get_user_input():
+def select_input_file():
     """
-    Guides the user through a series of prompts to get MIDI processing settings.
+    Prompts the user to select the input MIDI file using a dialog.
 
     Returns:
-        dict: A dictionary containing the user's selections,
-              e.g., {'input_path': '...', 'output_path': '...', 'mode': '...', ...}
-              Returns None if the user cancels.
+        str: The selected input file path, or None if cancelled.
     """
-    settings = {}
     path_completer = PathCompleter()
-
-    # 1. Get Input Path
-    settings['input_path'] = input_dialog(
+    input_path = input_dialog(
         title='Input MIDI File',
         text='Enter the path to the input MIDI file:',
         completer=path_completer,
         validator=NotEmptyValidator()
     ).run()
-    if settings['input_path'] is None: return None # User cancelled
+    return input_path
 
-    # 2. Get Output Path
+
+def get_user_input(input_path: str):
+    """
+    Guides the user through prompts for output path, mode, and parameters,
+    using the provided input_path.
+
+    Args:
+        input_path (str): The path to the input MIDI file.
+
+    Returns:
+        dict: A dictionary containing the user's selections (excluding input_path),
+              e.g., {'output_path': '...', 'mode': '...', ...}
+              Returns None if the user cancels any step.
+    """
+    settings = {}
+    path_completer = PathCompleter()
+
+    # 1. Get Output Path (Input path is already known)
     default_output = os.path.join(
-        os.path.dirname(settings['input_path']),
-        f"{os.path.splitext(os.path.basename(settings['input_path']))[0]}_modified.mid"
+        os.path.dirname(input_path),
+        f"{os.path.splitext(os.path.basename(input_path))[0]}_modified.mid"
     )
     settings['output_path'] = input_dialog(
         title='Output MIDI File',
@@ -59,7 +71,7 @@ def get_user_input():
     ).run()
     if settings['output_path'] is None: return None # User cancelled
 
-    # 3. Get Mode
+    # 2. Get Mode
     mode = radiolist_dialog(
         title='Select Mode',
         text='Choose the operation mode:',
@@ -71,7 +83,7 @@ def get_user_input():
     if mode is None: return None # User cancelled
     settings['mode'] = mode
 
-    # 4. Get Mode-Specific Parameters
+    # 3. Get Mode-Specific Parameters
     if mode == 'extend':
         bars = input_dialog(
             title='Extend Settings',
@@ -103,10 +115,15 @@ def show_success(title, text):
 
 # Example usage (for testing tui.py directly)
 if __name__ == '__main__':
-    user_settings = get_user_input()
-    if user_settings:
-        print("\nUser Settings:")
-        for key, value in user_settings.items():
-            print(f"  {key}: {value}")
+    test_input_path = select_input_file()
+    if test_input_path:
+        print(f"Selected input file: {test_input_path}")
+        user_settings = get_user_input(test_input_path)
+        if user_settings:
+            print("\nUser Settings (excluding input path):")
+            for key, value in user_settings.items():
+                print(f"  {key}: {value}")
+        else:
+            print("\nUser cancelled during settings input.")
     else:
-        print("\nUser cancelled.")
+        print("\nUser cancelled input file selection.")
