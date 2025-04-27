@@ -714,6 +714,11 @@ def main():
                           sys.exit(1)
 
                  elif mode == 'complement':
+                     # --- Check MIDI type before adding track ---
+                     if midi_file.type == 0:
+                         print("\nWarning: Original MIDI is Type 0. Adding a track requires converting the output file to Type 1.", file=sys.stderr)
+                         midi_file.type = 1 # Change type to allow multiple tracks for saving
+
                      print(f"\nCreating a new track for the '{settings['complement_type']}' complement...")
                      new_track = mido.MidiTrack()
                      midi_file.tracks.append(new_track)
@@ -752,6 +757,13 @@ def main():
 
                      midi_file.save(output_midi_path)
                      success_msg = f"Success! Modified MIDI saved to {output_midi_path}"
+                     # Add note about type change if applicable
+                     if mode == 'complement' and midi_file.type == 1 and len(midi_file.tracks) > 1:
+                         # Check if it *was* type 0 implicitly by checking if we just set it to 1
+                         # A more robust check would involve storing the original type earlier
+                         # For now, assume if it's complement mode, type 1, and >1 track, it was likely converted
+                         success_msg += " (Note: Output file is Type 1)."
+
                      print(f"\n{success_msg}")
                      show_success("Operation Successful", success_msg)
                  except Exception as e:
