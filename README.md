@@ -4,13 +4,14 @@
 
 This project aims to create a tool that leverages the Google Gemini API to help you arrange music: input a simple MIDI melody or chord idea, Gemini will help you expand on this, then saving the result as a MIDI file and importing that into your favorite DAW.
 
-## MVP Functionality
+## MVP Functionality (and initial enhancements)
 
 *   Loads a standard MIDI file (`.mid`).
-*   Extracts basic information from the first track (notes, first tempo, first key signature).
+*   Extracts basic information from the first track (notes, first tempo, first key signature, first time signature).
 *   Sends this information to the Gemini API.
 *   Prompts the user for the number of bars to extend the piece.
-*   Requests the Gemini API to generate new notes to extend the first track in a similar style.
+*   Calculates the target extension length in MIDI ticks based on the time signature and tempo.
+*   Requests the Gemini API to generate new notes to extend the first track in a similar style for the calculated duration.
 *   Appends the generated notes to the end of the first track.
 *   Saves the modified MIDI data to a new file.
 
@@ -40,20 +41,20 @@ This project aims to create a tool that leverages the Google Gemini API to help 
 Execute the script from the command line:
 
 ```bash
-python modify_midi.py <input_midi_path> <output_midi_path> <bars_to_extend>
+python imagine-music.py <input_midi_path> <output_midi_path> <bars_to_extend>
 ```
 
 *   `<input_midi_path>`: Path to the MIDI file you want to modify.
 *   `<output_midi_path>`: Path where the extended MIDI file will be saved.
-*   `<bars_to_extend>`: The approximate number of bars by which to extend the first track.
+*   `<bars_to_extend>`: The number of bars by which to extend the first track. The script uses the MIDI's time signature (defaulting to 4/4 if none is found) to calculate a more precise target duration in ticks for the generation process.
 
 **Example:**
 
 ```bash
-python modify_midi.py ./input/my_song.mid ./output/my_song_extended.mid 4
+python imagine-music.py ./input/my_song.mid ./output/my_song_extended.mid 4
 ```
 
-This will load `my_song.mid`, ask Gemini to generate approximately 4 bars of music based on the first track, append it, and save the result to `my_song_extended.mid`.
+This will load `my_song.mid`, ask Gemini to generate approximately 4 bars of music (calculated based on the MIDI's time signature) based on the first track, append it, and save the result to `my_song_extended.mid`.
 
 ## Future Enhancements (Post-MVP)
 
@@ -62,8 +63,4 @@ This will load `my_song.mid`, ask Gemini to generate approximately 4 bars of mus
 *   More sophisticated analysis (harmony, style).
 *   Different modification types (e.g., generating complementary parts like basslines or harmonies).
 *   Improved prompt engineering for better musical coherence.
-*   Handling of more MIDI meta-messages (time signatures, program changes).
-
-## Contributing
-
-Contributions are welcome. Please refer to the `spec.md` for more detailed design information.
+*   Handling of more MIDI meta-messages (multiple time signatures, program changes). *(Partially addressed: First time signature)*

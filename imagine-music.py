@@ -10,11 +10,12 @@ import re # Added import for cleaning JSON
 # Default values if not found in MIDI
 DEFAULT_TEMPO = 500000  # 120 bpm
 DEFAULT_KEY = "Cmaj"
+DEFAULT_TIME_SIGNATURE = {"numerator": 4, "denominator": 4} # Add default time signature
 
 def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
     """
-    Parses the first track of a MIDI file to extract notes, tempo, and key signature
-    into the MVP JSON format.
+    Parses the first track of a MIDI file to extract notes, tempo, key signature,
+    and time signature into the MVP JSON format.
     """
     if not midi_file.tracks:
         print("Warning: MIDI file has no tracks.", file=sys.stderr)
@@ -26,10 +27,12 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
     first_track = midi_file.tracks[0]
     tempo = DEFAULT_TEMPO
     key_signature = DEFAULT_KEY
+    time_signature_data = DEFAULT_TIME_SIGNATURE.copy() # Use default initially
     found_tempo = False
     found_key = False
+    found_time_sig = False # Flag for time signature
 
-    # First pass for meta messages (tempo, key)
+    # First pass for meta messages (tempo, key, time signature)
     for msg in first_track:
         if msg.is_meta:
             if msg.type == 'set_tempo' and not found_tempo:
@@ -40,8 +43,18 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
                 key_signature = msg.key # mido provides the key name directly
                 found_key = True
                 print(f"Found key signature: {key_signature}")
-        if found_tempo and found_key:
-            break # Optimization: stop searching once both are found
+            elif msg.type == 'time_signature' and not found_time_sig:
+                # Store relevant time signature info
+                time_signature_data['numerator'] = msg.numerator
+                time_signature_data['denominator'] = msg.denominator
+                # Optional: store clocks_per_click, notated_32nd_notes_per_beat if needed later
+                # time_signature_data['clocks_per_click'] = msg.clocks_per_click
+                # time_signature_data['notated_32nd_notes_per_beat'] = msg.notated_32nd_notes_per_beat
+                found_time_sig = True
+                print(f"Found time signature: {msg.numerator}/{msg.denominator}")
+
+        if found_tempo and found_key and found_time_sig:
+            break # Optimization: stop searching once all are found
 
     # --- Extract notes from the first track ---
     notes = []
@@ -76,6 +89,7 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
     mvp_representation = {
         "tempo": tempo,
         "key_signature": key_signature,
+        "time_signature": time_signature_data, # Add time signature
         "ticks_per_beat": midi_file.ticks_per_beat,
         "tracks": [
             {
@@ -175,16 +189,20 @@ def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int):
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-flash') # Or choose another appropriate model
 
-        # --- Construct the Prompt (MVP Step 6) ---
-        # TODO: Refine this prompt significantly based on testing.
-        # TODO: Calculate extension length in ticks based on bars_to_extend, tempo, ticks_per_beat,
-        #       and potentially the time signature (which isn't parsed in MVP).
-        #       For MVP, we rely on Gemini interpreting "approximately X bars".
-        # Example calculation (assuming 4/4 time):
-        # ticks_per_bar = mvp_json_data['ticks_per_beat'] * 4
-        # target_extension_ticks = ticks_per_bar * bars_to_extend
-        # extension_request = f"Extend the following musical piece by approximately {target_extension_ticks} ticks (which is about {bars_to_extend} bars)."
-        extension_request = f"Extend the following musical piece by approximately {bars_to_extend} bars."
+        # --- Construct the Prompt (MVP Step 6 / Post-MVP Refinement) ---
+        # Calculate extension length in ticks using time signature
+        ticks_per_beat = mvp_json_data.get('ticks_per_beat', 480) # Default if missing
+        time_sig = mvp_json_data.get('time_signature', DEFAULT_TIME_SIGNATURE)
+        numerator = time_sig.get('numerator', DEFAULT_TIME_SIGNATURE['numerator'])
+        # Denominator interpretation for beats per bar is complex in MIDI.
+        # Simplification: Assume numerator directly gives beats per bar (common for x/4 time).
+        # A more robust calculation would use the denominator: beats_per_bar = numerator * (4 / denominator)
+        # but let's stick to the simpler approach for now.
+        ticks_per_bar = ticks_per_beat * numerator
+        target_extension_ticks = ticks_per_bar * bars_to_extend
+
+        extension_request = (f"Extend the following musical piece by approximately {bars_to_extend} bars "
+                             f"(target duration: around {target_extension_ticks} ticks).")
 
         prompt = f"""
 You are a MIDI music generation assistant.
@@ -350,7 +368,7 @@ def main():
     # Add input and output path arguments
     parser.add_argument("input_midi_path", type=str, help="Path to the input MIDI file.")
     parser.add_argument("output_midi_path", type=str, help="Path to save the modified MIDI file.")
-    parser.add_argument("bars_to_extend", type=int, help="Number of bars to extend the first track by.") # TODO: Later change to ticks or handle bar conversion
+    parser.add_argument("bars_to_extend", type=int, help="Number of bars to extend the first track by.") # Keep help text simple
 
     args = parser.parse_args()
 
