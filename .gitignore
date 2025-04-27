@@ -18,6 +18,6 @@ env/
 # Other
 *.log
 *.tmp
-
+.midi-thinker-cache/
 generate_sample_midi.py
 samples/sample_composition_modified.mid
