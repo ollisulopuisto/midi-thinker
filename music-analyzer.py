@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 import argparse # Added for command-line arguments
 from googleapiclient.errors import HttpError # Import HttpError for specific exception handling
 from google.api_core import exceptions as google_exceptions # Import for broader API errors
+import json # Added for caching
+import hashlib # Added for caching
 
 # --- Konfiguraatio ---
 load_dotenv()
@@ -30,7 +32,55 @@ HARMONY_CHANNEL_1 = 1 # MIDI-kanava 2
 HARMONY_CHANNEL_2 = 2 # MIDI-kanava 3
 CHORD_CHANNEL = 3     # MIDI-kanava 4 (käytetään tekstiviesteille)
 
+# Cache directory
+CACHE_DIR = ".music-analyzer-cache"
+
 # --- Helper-funktiot ---
+
+def get_cache_filepath(audio_file_path: str) -> str | None:
+    """Generates a cache filepath based on the hash of the input audio file."""
+    try:
+        hasher = hashlib.sha256()
+        with open(audio_file_path, 'rb') as f:
+            while True:
+                chunk = f.read(4096)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+        file_hash = hasher.hexdigest()
+        # Ensure cache directory exists
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        return os.path.join(CACHE_DIR, f"{file_hash}.json")
+    except Exception as e:
+        print(f"Varoitus: Ei voitu luoda cache-avainta tiedostolle {audio_file_path}: {e}", file=sys.stderr)
+        return None
+
+def load_from_cache(cache_filepath: str) -> dict | None:
+    """Loads analysis data from a cache file."""
+    if not cache_filepath or not os.path.exists(cache_filepath):
+        return None
+    try:
+        with open(cache_filepath, 'r') as f:
+            cached_data = json.load(f)
+        print(f"Ladattu analyysi välimuistista: {cache_filepath}")
+        return cached_data
+    except json.JSONDecodeError:
+        print(f"Varoitus: Virheellinen JSON cache-tiedostossa: {cache_filepath}. Ohitetaan cache.", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"Varoitus: Ei voitu ladata cache-tiedostosta {cache_filepath}: {e}", file=sys.stderr)
+        return None
+
+def save_to_cache(cache_filepath: str, analysis_data: dict):
+    """Saves analysis data to a cache file."""
+    if not cache_filepath or not analysis_data:
+        return
+    try:
+        with open(cache_filepath, 'w') as f:
+            json.dump(analysis_data, f, indent=2)
+        print(f"Tallennettu analyysi välimuistiin: {cache_filepath}")
+    except Exception as e:
+        print(f"Varoitus: Ei voitu tallentaa cache-tiedostoon {cache_filepath}: {e}", file=sys.stderr)
 
 def upload_audio_file(file_path, max_retries=3, initial_delay=2):
     """
@@ -633,87 +683,102 @@ if __name__ == "__main__":
         print(f"Virhe: Tiedostoa ei löytynyt polusta: {audio_file_path}")
         exit()
 
-    # 1. Lataa audio Geminiin
-    uploaded_file = upload_audio_file(audio_file_path)
-    if not uploaded_file:
-        print("Audion lataus epäonnistui. Ohjelma lopetetaan.")
-        exit()
+    # --- Caching Logic ---
+    cache_filepath = get_cache_filepath(audio_file_path)
+    parsed_data = load_from_cache(cache_filepath)
+    # --- End Caching Logic ---
 
-    # Varmista, että saatiin URI
-    if not hasattr(uploaded_file, 'uri'):
-         print("Virhe: Ladatulta tiedostolta puuttuu URI. API-vastaus saattoi muuttua.")
-         # Yritä käyttää nimeä varalta, mutta tämä voi epäonnistua
-         file_identifier = uploaded_file.name
-    else:
-         file_identifier = uploaded_file.uri # Käytä URIa jos saatavilla
+    if parsed_data is None: # If not found in cache or cache failed
+        print("Analyysia ei löytynyt välimuistista, suoritetaan API-kutsu...")
+        # 1. Lataa audio Geminiin
+        uploaded_file = upload_audio_file(audio_file_path)
+        if not uploaded_file:
+            print("Audion lataus epäonnistui. Ohjelma lopetetaan.")
+            exit()
 
-    # 2. Rakenna ja lähetä promptti
-    # Käytä URIa promptissa
-    prompt_content = build_prompt(file_identifier)
-    print("\nLähetetään pyyntö Gemini API:lle mallilla {}...".format(MODEL_NAME))
-    print("Tämä voi kestää jonkin aikaa riippuen äänitiedoston pituudesta ja mallista.")
+        # Varmista, että saatiin URI
+        if not hasattr(uploaded_file, 'uri'):
+             print("Virhe: Ladatulta tiedostolta puuttuu URI. API-vastaus saattoi muuttua.")
+             # Yritä käyttää nimeä varalta, mutta tämä voi epäonnistua
+             file_identifier = uploaded_file.name
+        else:
+             file_identifier = uploaded_file.uri # Käytä URIa jos saatavilla
 
+        # 2. Rakenna ja lähetä promptti
+        # Käytä URIa promptissa
+        prompt_content = build_prompt(file_identifier)
+        print("\nLähetetään pyyntö Gemini API:lle mallilla {}...".format(MODEL_NAME))
+        print("Tämä voi kestää jonkin aikaa riippuen äänitiedoston pituudesta ja mallista.")
 
-    try:
-        model = genai.GenerativeModel(MODEL_NAME)
-        # generation_config = genai.types.GenerationConfig(
-        #      temperature=0.2 # Kokeile säätää lämpötilaa tarkkuuden/luovuuden tasapainottamiseksi
-        # )
-        # Käytä stream=False saadaksesi koko vastauksen kerralla
+        try:
+            model = genai.GenerativeModel(MODEL_NAME)
+            # generation_config = genai.types.GenerationConfig(
+            #      temperature=0.2 # Kokeile säätää lämpötilaa tarkkuuden/luovuuden tasapainottamiseksi
+            # )
+            # Käytä stream=False saadaksesi koko vastauksen kerralla
 
-        # Try passing prompt and file object in a list, similar to 'contents'
-        response = model.generate_content(
-            [prompt_content, uploaded_file], # Pass prompt string and uploaded file object
-            stream=False
-            #generation_config=generation_config
-        )
+            # Try passing prompt and file object in a list, similar to 'contents'
+            response = model.generate_content(
+                [prompt_content, uploaded_file], # Pass prompt string and uploaded file object
+                stream=False
+                #generation_config=generation_config
+            )
 
-        # Tarkista, että vastaus on olemassa ja sisältää tekstiä
-        if not response or not hasattr(response, 'text') or not response.text:
-             print("\nVirhe: Gemini API ei palauttanut kelvollista tekstivastausta.")
-             print("Mahdollisia syitä: API-virhe, malli ei pystynyt käsittelemään pyyntöä, vastausmuoto tuntematon.")
-             # Tulosta koko vastausobjekti debuggausta varten, jos se on olemassa
-             if response:
-                  print("\n--- Koko Gemini-vastaus (Debug) ---")
-                  try:
-                      print(response)
-                  except Exception as print_e:
-                      print(f"Ei voitu tulostaa vastausta: {print_e}")
-                  print("-----------------------------------\n")
-             exit()
-
-
-        print("Gemini API -vastaus vastaanotettu.")
-        # Tulosta raaka vastaus AINA debuggausta varten, jos jäsentäminen epäonnistuu
-        print("\n--- Gemini Raw Response ---")
-        print(response.text)
-        print("---------------------------\n")
-
-
-        # 3. Jäsennä vastaus
-        print("Aloitetaan vastauksen jäsentäminen...")
-        parsed_data = parse_gemini_response(response.text)
+            # Tarkista, että vastaus on olemassa ja sisältää tekstiä
+            if not response or not hasattr(response, 'text') or not response.text:
+                 print("\nVirhe: Gemini API ei palauttanut kelvollista tekstivastausta.")
+                 print("Mahdollisia syitä: API-virhe, malli ei pystynyt käsittelemään pyyntöä, vastausmuoto tuntematon.")
+                 # Tulosta koko vastausobjekti debuggausta varten, jos se on olemassa
+                 if response:
+                      print("\n--- Koko Gemini-vastaus (Debug) ---")
+                      try:
+                          print(response)
+                      except Exception as print_e:
+                          print(f"Ei voitu tulostaa vastausta: {print_e}")
+                      print("-----------------------------------\n")
+                 exit()
 
 
-        # 4. Luo MIDI-tiedosto
+            print("Gemini API -vastaus vastaanotettu.")
+            # Tulosta raaka vastaus AINA debuggausta varten, jos jäsentäminen epäonnistuu
+            print("\n--- Gemini Raw Response ---")
+            print(response.text)
+            print("---------------------------\n")
+
+
+            # 3. Jäsennä vastaus
+            print("Aloitetaan vastauksen jäsentäminen...")
+            parsed_data = parse_gemini_response(response.text)
+
+            # --- Save to Cache ---
+            if parsed_data: # Only save if parsing was successful
+                save_to_cache(cache_filepath, parsed_data)
+            # --- End Save to Cache ---
+
+            # Voit poistaa ladatun tiedoston Geministä, jos haluat siivota tilaa
+            # Huom: Poistaminen vaatii tiedoston nimen (ei URIa)
+            # try:
+            #     print(f"\nYritetään poistaa ladattu tiedosto {uploaded_file.name} Geministä...")
+            #     genai.delete_file(uploaded_file.name)
+            #     print("Tiedosto poistettu.")
+            # except Exception as e:
+            #     print(f"Varoitus: Ladatun tiedoston poistaminen epäonnistui: {e}")
+
+
+        except Exception as e:
+            print(f"\nOhjelman suorituksessa tapahtui odottamaton virhe API-kutsun aikana: {e}")
+            import traceback
+            traceback.print_exc() # Tulostaa yksityiskohtaisemman virheenjäljityksen
+            exit() # Exit if API call or parsing failed critically
+
+    # --- End of API call block ---
+
+    # 4. Luo MIDI-tiedosto (tämä suoritetaan aina, joko cachesta tai API-kutsun jälkeen)
+    if parsed_data: # Proceed only if we have data (from cache or API)
         output_midi_filename = os.path.splitext(os.path.basename(audio_file_path))[0] + ".mid"
         create_midi_file(parsed_data, output_midi_filename)
-
-
-        # Voit poistaa ladatun tiedoston Geministä, jos haluat siivota tilaa
-        # Huom: Poistaminen vaatii tiedoston nimen (ei URIa)
-        # try:
-        #     print(f"\nYritetään poistaa ladattu tiedosto {uploaded_file.name} Geministä...")
-        #     genai.delete_file(uploaded_file.name)
-        #     print("Tiedosto poistettu.")
-        # except Exception as e:
-        #     print(f"Varoitus: Ladatun tiedoston poistaminen epäonnistui: {e}")
-
-
-    except Exception as e:
-        print(f"\nOhjelman suorituksessa tapahtui odottamaton virhe: {e}")
-        import traceback
-        traceback.print_exc() # Tulostaa yksityiskohtaisemman virheenjäljityksen
+    else:
+        print("Analyysidataa ei saatavilla (ei cachesta eikä API:sta). MIDI-tiedostoa ei luoda.")
 
 
     print("\nOhjelman suoritus päättyi.")
