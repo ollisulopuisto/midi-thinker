@@ -5,6 +5,8 @@ import re
 import time
 from dotenv import load_dotenv
 import argparse # Added for command-line arguments
+from googleapiclient.errors import HttpError # Import HttpError for specific exception handling
+from google.api_core import exceptions as google_exceptions # Import for broader API errors
 
 # --- Konfiguraatio ---
 load_dotenv()
@@ -30,46 +32,82 @@ CHORD_CHANNEL = 3     # MIDI-kanava 4 (käytetään tekstiviesteille)
 
 # --- Helper-funktiot ---
 
-def upload_audio_file(file_path):
-    """Lataa äänitiedoston Gemini API:lle ja palauttaa tiedostoreferenssin."""
+def upload_audio_file(file_path, max_retries=3, initial_delay=2):
+    """
+    Lataa äänitiedoston Gemini API:lle ja palauttaa tiedostoreferenssin.
+    Sisältää uudelleenyrityksen väliaikaisille palvelinvirheille (esim. 503).
+    """
     print(f"Ladataan tiedostoa: {file_path}...")
-    try:
-        # Tarkista tiedoston koko ennen latausta (API:lla voi olla rajoituksia)
-        file_size = os.path.getsize(file_path)
-        print(f"Tiedoston koko: {file_size / (1024*1024):.2f} MB")
-        # Gemini 1.5 Prolla on suuri konteksti-ikkuna, mutta tarkista silti rajoitukset
-        # if file_size > YOUR_SIZE_LIMIT_BYTES: # Aseta tarvittaessa kokorajoitus
-        #    print("Virhe: Tiedosto on liian suuri.")
-        #    return None
+    retries = 0
+    delay = initial_delay
+    last_exception = None
 
-        audio_file = genai.upload_file(path=file_path)
-        print(f"Tiedoston lataus aloitettu: {audio_file.name}")
-        # Odotetaan, että tiedosto on käsitelty (tärkeää!)
-        while audio_file.state.name == "PROCESSING":
-            print(f"Odetaan tiedoston {audio_file.name} käsittelyä...")
-            time.sleep(10) # Pidennä odotusaikaa isommille tiedostoille tai hitaammille malleille
-            # Yritä hakea tiedoston tila uudelleen
-            try:
-                audio_file = genai.get_file(audio_file.name)
-            except Exception as e:
-                print(f"Virhe haettaessa tiedoston tilaa: {e}. Oletetaan käsittelyn jatkuvan.")
-                # Voit lisätä tähän logiikkaa, esim. yrittää uudelleen muutaman kerran ennen luovuttamista
+    while retries <= max_retries:
+        try:
+            # Tarkista tiedoston koko ennen latausta (API:lla voi olla rajoituksia)
+            file_size = os.path.getsize(file_path)
+            print(f"Tiedoston koko: {file_size / (1024*1024):.2f} MB")
 
-        if audio_file.state.name == "FAILED":
-             raise ValueError(f"Tiedoston {file_path} (URI: {audio_file.uri}) lataus tai käsittely epäonnistui.")
-        elif audio_file.state.name == "ACTIVE":
-            print(f"Tiedosto {audio_file.name} (URI: {audio_file.uri}) ladattu ja valmis.")
-            return audio_file
-        else:
-             print(f"Tiedoston {audio_file.name} tila on odottamaton: {audio_file.state.name}. Yritetään jatkaa...")
-             # Voi olla riskialtista jatkaa, mutta annetaan mahdollisuus joskus toimia
-             return audio_file
+            audio_file = genai.upload_file(path=file_path)
+            print(f"Tiedoston lataus aloitettu: {audio_file.name}")
 
-    except Exception as e:
-        print(f"Virhe ladatessa tai käsitellessä tiedostoa {file_path}: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+            # Odotetaan, että tiedosto on käsitelty (tärkeää!)
+            while audio_file.state.name == "PROCESSING":
+                print(f"Odetaan tiedoston {audio_file.name} käsittelyä...")
+                time.sleep(10) # Pidennä odotusaikaa isommille tiedostoille tai hitaammille malleille
+                try:
+                    audio_file = genai.get_file(audio_file.name)
+                except (HttpError, google_exceptions.GoogleAPIError) as e:
+                    # Myös tilan haku voi epäonnistua väliaikaisesti
+                    print(f"Virhe haettaessa tiedoston tilaa: {e}. Oletetaan käsittelyn jatkuvan.")
+                    # Voit lisätä tähän logiikkaa, esim. yrittää uudelleen muutaman kerran ennen luovuttamista
+
+            if audio_file.state.name == "FAILED":
+                 raise ValueError(f"Tiedoston {file_path} (URI: {audio_file.uri}) lataus tai käsittely epäonnistui.")
+            elif audio_file.state.name == "ACTIVE":
+                print(f"Tiedosto {audio_file.name} (URI: {audio_file.uri}) ladattu ja valmis.")
+                return audio_file
+            else:
+                 print(f"Tiedoston {audio_file.name} tila on odottamaton: {audio_file.state.name}. Yritetään jatkaa...")
+                 return audio_file # Voi olla riskialtista, mutta annetaan mahdollisuus
+
+        except HttpError as e:
+            last_exception = e
+            # Tarkista virhekoodi, yritä uudelleen vain tietyissä tapauksissa (5xx virheet)
+            if e.resp.status >= 500 and retries < max_retries:
+                print(f"Virhe {e.resp.status} ladatessa tiedostoa (yritys {retries + 1}/{max_retries + 1}). Yritetään uudelleen {delay} sekunnin kuluttua...")
+                time.sleep(delay)
+                retries += 1
+                delay *= 2 # Exponential backoff
+            else:
+                print(f"Pysyvä virhe {e.resp.status} ladatessa tiedostoa tai uudelleenyritykset ({max_retries}) käytetty: {e}")
+                import traceback
+                traceback.print_exc()
+                return None # Lopeta uudelleenyritykset
+        except google_exceptions.GoogleAPIError as e: # Laajempi Google API -virheiden käsittely
+            last_exception = e
+            # Voit tarkentaa tätä, jos tiedät mitkä GoogleAPIError-virheet ovat väliaikaisia
+            if retries < max_retries: # Yritä uudelleen yleisille API-virheille varovasti
+                print(f"Google API -virhe ladatessa tiedostoa (yritys {retries + 1}/{max_retries + 1}). Yritetään uudelleen {delay} sekunnin kuluttua: {e}")
+                time.sleep(delay)
+                retries += 1
+                delay *= 2
+            else:
+                print(f"Pysyvä Google API -virhe ladatessa tiedostoa tai uudelleenyritykset ({max_retries}) käytetty: {e}")
+                import traceback
+                traceback.print_exc()
+                return None
+        except Exception as e:
+            # Muut odottamattomat virheet
+            last_exception = e
+            print(f"Odottamaton virhe ladatessa tai käsitellessä tiedostoa {file_path}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None # Älä yritä uudelleen odottamattomissa virheissä
+
+    # Jos kaikki uudelleenyritykset epäonnistuivat
+    print(f"Tiedoston {file_path} lataus epäonnistui {max_retries + 1} yrityksen jälkeen.")
+    return None
 
 def build_prompt(audio_file_uri):
     """Rakentaa promptin Gemini API:lle käyttäen tiedoston URI:a."""
@@ -150,19 +188,27 @@ def parse_gemini_response(text):
         if re.match(r'^\d?\s*\.?\s*\*\*Sointukierto', line, re.IGNORECASE): current_section = "chords"; print("--- Jäsennetään Sointuja ---"); continue
         if re.match(r'^\d?\s*\.?\s*\*\*Rummut', line, re.IGNORECASE): current_section = "drums"; print("--- Jäsennetään Rumpuja ---"); continue
         if re.match(r'^\d?\s*\.?\s*\*\*Lead-Melodia', line, re.IGNORECASE): current_section = "melody"; print("--- Jäsennetään Melodiaa ---"); continue
-        if re.match(r'^\d?\s*\.?\s*\*\*.*?Harmonia', line, re.IGNORECASE):
+        # Käytä searchia harmonian otsikon tunnistamiseen, jotta '*   **Harmonia...*' toimii
+        if re.search(r'\*\*.*?Harmonia', line, re.IGNORECASE):
              current_section = "harmonies"
              # Tarkista, onko tämä alaotsikko (esim. "Harmonia 1 (Jouset):")
-             match_harmony_header = re.match(r'Harmonia\s*\d*\s*(\(.*\))?:?', line, re.IGNORECASE)
+             # Käytä searchia löytääksesi kuvion mistä tahansa, ottaen huomioon etuliitteet kuten '*  '
+             match_harmony_header = re.search(r'Harmonia\s*\d*\s*(\(.*\))?:?', line, re.IGNORECASE) # <-- Käytä searchia
              if match_harmony_header:
-                 current_harmony_group = match_harmony_header.group(0).strip(': ')
+                 # Pura nimi luotettavammin, poistaen mahdolliset etu-/jälkiliitteet
+                 group_text = match_harmony_header.group(0).strip()
+                 # Poista mahdolliset listamerkit tai ylimääräiset merkit
+                 group_text = re.sub(r'^[*\-\s`]+', '', group_text) # Poista *, -, välilyönti, ` alusta
+                 group_text = group_text.strip(':*` ') # Poista :, *, `, välilyönti lopusta ja alusta
+                 current_harmony_group = group_text
                  print(f"--- Jäsennetään Harmoniaa ({current_harmony_group}) ---")
              else:
+                 # Jos pääotsikko ilman tarkempaa nimeä, käytä oletusta
                  current_harmony_group = "Default Harmony"
                  print("--- Jäsennetään Harmoniaa (Oletus) ---")
              continue
         
-        # Varmista, ettei otsikkoriviä yritetä jäsentää datana
+        # Varmista, ettei otsikkoriviä yritetä jäsentää datana (tämä on edelleen hyödyllinen pääotsikoille)
         if line.startswith("**") or re.match(r'^\d\.', line):
              continue
 
@@ -170,7 +216,7 @@ def parse_gemini_response(text):
         # Jäsennä dataa osion perusteella
         try:
             if current_section == "tempo":
-                # Etsi numero riviltä
+                # Käytä searchia, se on robustimpi löytämään numeron '*   `123.4`' sisältä
                 match = re.search(r'(\d+(\.\d+)?)', line)
                 if match:
                     data["tempo"] = float(match.group(1))
@@ -178,44 +224,59 @@ def parse_gemini_response(text):
                     current_section = None # Estää seuraavan rivin lukemisen tempona
 
             elif current_section == "key":
-                # Olettaa, että avain on rivillä esim. "C Major" tai "A Minor"
+                # Käytä searchia, robustimpi
                 match = re.search(r'([A-Ga-g][#b]?\s*(?:Major|Minor|Duuri|Molli))', line, re.IGNORECASE)
                 if match:
                     data["key"] = match.group(1).strip()
                     print(f"Tunnistettu sävellaji: {data['key']}")
                     current_section = None # Estää seuraavan rivin lukemisen sävellajina
                 else:
-                    # Jos ei löydy tarkkaa vastinetta, otetaan koko rivi (voi olla vain "C" tms.)
-                    if len(line) > 0 and len(line) < 15: # Heuristinen tarkistus
-                         data["key"] = line
+                    # Yritä purkaa `...` sisältä, jos tarkka kuvio ei täsmää
+                    match_generic = re.search(r'`(.+?)`', line)
+                    generic_key = match_generic.group(1).strip() if match_generic else line.lstrip('* ').strip() # Ota rivi ilman etuliitettä
+                    if len(generic_key) > 0 and len(generic_key) < 20: # Heuristinen tarkistus
+                         data["key"] = generic_key
                          print(f"Tunnistettu sävellaji (geneerinen): {data['key']}")
                          current_section = None
 
 
             elif current_section == "chords":
-                # Muoto: [aika_sekunteina] - [soinnun_nimi]
-                match = re.match(r'(\d+(?:\.\d+)?)\s*-\s*(.+)', line)
+                # Käytä searchia ja käsittele valinnaiset backtickit
+                # `?(\d+(?:\.\d+)?)`? : Valinnainen `, numero, valinnainen `
+                # \s*-\s* : Välilyönti-viiva-välilyönti
+                # `?(.+?)`? : Valinnainen `, mikä tahansa merkki (ei-ahne), valinnainen `
+                # $ : Rivin loppu (auttaa välttämään osittaisia osumia)
+                match = re.search(r'`?(\d+(?:\.\d+)?)`?\s*-\s*`?(.+?)`?$', line)
                 if match:
                     time_sec = float(match.group(1))
-                    chord_name = match.group(2).strip()
+                    chord_name = match.group(2).strip() # Poista mahdolliset ylimääräiset välilyönnit
                     data["chords"].append({"time": time_sec, "name": chord_name})
                     # print(f"Sointu: {time_sec:.2f}s - {chord_name}")
+                # Lisää else if debuggausta varten, jos rivi ei ole vain listamerkki
+                # elif line and not line.startswith('*'):
+                #    print(f"Varoitus: Riviä ei voitu jäsentää sointuna: '{line}'")
 
 
             elif current_section == "drums":
-                 # Muoto: [aika_sekunteina] - [instrumentti]
-                match = re.match(r'(\d+(?:\.\d+)?)\s*-\s*(.+)', line)
+                 # Käytä searchia ja käsittele valinnaiset backtickit (sama kuin soinnuille)
+                match = re.search(r'`?(\d+(?:\.\d+)?)`?\s*-\s*`?(.+?)`?$', line)
                 if match:
                     time_sec = float(match.group(1))
-                    instrument_name = match.group(2).strip()#.lower() # Pidä alkuperäinen kirjainkoko joskus hyödyllinen
+                    instrument_name = match.group(2).strip()
                     data["drums"].append({"time": time_sec, "instrument": instrument_name})
                     # print(f"Rumpu: {time_sec:.2f}s - {instrument_name}")
+                # elif line and not line.startswith('*'):
+                #    print(f"Varoitus: Riviä ei voitu jäsentää rumpuna: '{line}'")
 
 
             elif current_section == "melody" or current_section == "harmonies":
-                 # Muoto: [aika_sekunteina] - [nuotti] - [kesto_sekunteina]
-                 # Salli sekä piste että pilkku desimaalierottimena ja erilaiset välilyönnit
-                 match = re.match(r'(\d+(?:[.,]\d+)?)\s*-\s*([A-Ga-g][#b]?\d)\s*-\s*(\d+(?:[.,]\d+)?)', line.replace(',', '.'))
+                 # Käytä searchia ja käsittele valinnaiset backtickit, salli pilkku/piste desimaalierottimena
+                 # `?(\d+(?:[.,]\d+)?)`? : Aika
+                 # \s*-\s*
+                 # `?([A-Ga-g][#b]?\d)`? : Nuotti (esim. C4, F#5)
+                 # \s*-\s*
+                 # `?(\d+(?:[.,]\d+)?)`? : Kesto
+                 match = re.search(r'`?(\d+(?:[.,]\d+)?)`?\s*-\s*`?([A-Ga-g][#b]?\d)`?\s*-\s*`?(\d+(?:[.,]\d+)?)`?', line.replace(',', '.'))
                  if match:
                      time_sec = float(match.group(1))
                      note_name = match.group(2).strip()
@@ -229,13 +290,14 @@ def parse_gemini_response(text):
                          note_data["group"] = current_harmony_group if current_harmony_group else "Default Harmony"
                          data["harmonies"].append(note_data)
                          # print(f"Harmonia ({note_data['group']}): {time_sec:.2f}s - {note_name} - {duration_sec:.2f}s")
-                 # Tunnista instrumenttirivit
-                 elif line.lower().startswith("instrumentti:") and current_section == "melody":
-                     print(f"Tunnistettu melodiainstrumentti (info): {line.split(':', 1)[1].strip()}")
-                 elif line.lower().startswith("harmonia") and line.endswith(":") and current_section == "harmonies":
-                     # Tämä on jo käsitelty otsikkologiikassa, mutta varmuuden vuoksi ohitetaan tässä
-                     pass
-                 #elif line and (current_section == "melody" or current_section == "harmonies"):
+                 # Tunnista instrumenttirivit (käytä searchia ja poista backtickit)
+                 elif re.search(r'Instrumentti:', line, re.IGNORECASE) and current_section == "melody":
+                     instr_name = line.split(':', 1)[1].strip(' `') # Poista myös backtickit
+                     print(f"Tunnistettu melodiainstrumentti (info): {instr_name}")
+                 # Harmonian alaotsikot käsitellään jo otsikkologiikassa, joten ohita ne tässä
+                 elif re.search(r'Harmonia\s*\d*\s*\(.*\)?:\s*$', line, re.IGNORECASE) and current_section == "harmonies":
+                     pass # Jo käsitelty
+                 # elif line and not line.startswith('*') and not re.search(r'Instrumentti:', line, re.IGNORECASE): # Vältä varoitusta listamerkeistä tai instrumenttiriveistä
                  #    print(f"Varoitus: Riviä ei voitu jäsentää nuottina ({current_section}): '{line}'")
 
 
