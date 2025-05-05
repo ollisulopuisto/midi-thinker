@@ -3,6 +3,7 @@ import mido
 import os
 import re
 import time
+import sys # Import sys for stderr
 from dotenv import load_dotenv
 import argparse # Added for command-line arguments
 from googleapiclient.errors import HttpError # Import HttpError for specific exception handling
@@ -672,8 +673,14 @@ if __name__ == "__main__":
     # --- Argumenttien käsittely ---
     parser = argparse.ArgumentParser(description="Analysoi äänitiedosto Gemini API:lla ja luo MIDI-tiedoston.")
     parser.add_argument("audio_file", help="Polku syötettävään äänitiedostoon (esim. musiikki.mp3)")
+    parser.add_argument(
+        "--force-analyze",
+        action="store_true",
+        help="Ohita välimuisti ja pakota uusi analyysi Gemini API:lla."
+    )
     args = parser.parse_args()
     audio_file_path = args.audio_file
+    force_analyze = args.force_analyze
     # --- Argumenttien käsittely päättyy ---
 
     # Poistettu input()-kutsu
@@ -683,13 +690,34 @@ if __name__ == "__main__":
         print(f"Virhe: Tiedostoa ei löytynyt polusta: {audio_file_path}")
         exit()
 
-    # --- Caching Logic ---
+    parsed_data = None
     cache_filepath = get_cache_filepath(audio_file_path)
-    parsed_data = load_from_cache(cache_filepath)
+
+    # --- Caching Logic ---
+    if not force_analyze and cache_filepath:
+        cached_data = load_from_cache(cache_filepath)
+        if cached_data:
+            # Kysy käyttäjältä, haluaako hän käyttää cachea vai analysoida uudelleen
+            while True:
+                use_cache = input(f"Löytyi analyysi välimuistista ({cache_filepath}). Haluatko käyttää sitä? (k/e): ").lower().strip()
+                if use_cache == 'k':
+                    parsed_data = cached_data
+                    print("Käytetään välimuistissa olevaa analyysia.")
+                    break
+                elif use_cache == 'e':
+                    print("Ohitetaan välimuisti ja suoritetaan uusi analyysi.")
+                    # parsed_data pysyy None, jotta API-kutsu suoritetaan
+                    break
+                else:
+                    print("Virheellinen syöte. Vastaa 'k' (kyllä) tai 'e' (ei).")
+    elif force_analyze:
+        print("Pakotetaan uusi analyysi (--force-analyze).")
     # --- End Caching Logic ---
 
-    if parsed_data is None: # If not found in cache or cache failed
-        print("Analyysia ei löytynyt välimuistista, suoritetaan API-kutsu...")
+
+    if parsed_data is None: # If not found in cache, cache failed, user chose 'e', or --force-analyze was used
+        if not force_analyze and cache_filepath and os.path.exists(cache_filepath) and use_cache != 'e': # Avoid redundant message if forced
+             print("Analyysia ei löytynyt välimuistista tai uudelleenanalyysi valittu, suoritetaan API-kutsu...")
         # 1. Lataa audio Geminiin
         uploaded_file = upload_audio_file(audio_file_path)
         if not uploaded_file:
