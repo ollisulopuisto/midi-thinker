@@ -4,6 +4,7 @@ import os
 import re
 import time
 from dotenv import load_dotenv
+import argparse # Added for command-line arguments
 
 # --- Konfiguraatio ---
 load_dotenv()
@@ -556,7 +557,15 @@ def create_midi_file(data, output_filename="output.mid"):
 
 # --- Pääohjelma ---
 if __name__ == "__main__":
-    audio_file_path = input("Anna polku äänitiedostoon (esim. musiikki.mp3 tai /polku/kappale.wav): ")
+    # --- Argumenttien käsittely ---
+    parser = argparse.ArgumentParser(description="Analysoi äänitiedosto Gemini API:lla ja luo MIDI-tiedoston.")
+    parser.add_argument("audio_file", help="Polku syötettävään äänitiedostoon (esim. musiikki.mp3)")
+    args = parser.parse_args()
+    audio_file_path = args.audio_file
+    # --- Argumenttien käsittely päättyy ---
+
+    # Poistettu input()-kutsu
+    # audio_file_path = input("Anna polku äänitiedostoon (esim. musiikki.mp3 tai /polku/kappale.wav): ")
 
     if not os.path.exists(audio_file_path):
         print(f"Virhe: Tiedostoa ei löytynyt polusta: {audio_file_path}")
@@ -589,12 +598,13 @@ if __name__ == "__main__":
         #      temperature=0.2 # Kokeile säätää lämpötilaa tarkkuuden/luovuuden tasapainottamiseksi
         # )
         # Käytä stream=False saadaksesi koko vastauksen kerralla
-        # Lisää tiedosto ja promptti listana model.generate_content-metodille
-        response = model.generate_content([genai.types.Content(parts=[genai.types.Part.from_uri(file_identifier, mime_type=uploaded_file.mime_type)]), # Lähetä tiedosto URI:na
-                                           prompt_content], # Lähetä tekstiprompti
-                                           stream=False
-                                           #generation_config=generation_config
-                                           )
+
+        # Try passing prompt and file object in a list, similar to 'contents'
+        response = model.generate_content(
+            [prompt_content, uploaded_file], # Pass prompt string and uploaded file object
+            stream=False
+            #generation_config=generation_config
+        )
 
         # Tarkista, että vastaus on olemassa ja sisältää tekstiä
         if not response or not hasattr(response, 'text') or not response.text:
