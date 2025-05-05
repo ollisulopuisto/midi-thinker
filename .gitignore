@@ -22,3 +22,4 @@ env/
 generate_sample_midi.py
 samples/*modified.mid
 *.mid
+.music-analyzer-cache/*

@@ -10,6 +10,8 @@ from googleapiclient.errors import HttpError # Import HttpError for specific exc
 from google.api_core import exceptions as google_exceptions # Import for broader API errors
 import json # Added for caching
 import hashlib # Added for caching
+import threading # Added for spinner
+import itertools # Added for spinner
 
 # --- Konfiguraatio ---
 load_dotenv()
@@ -35,6 +37,40 @@ CHORD_CHANNEL = 3     # MIDI-kanava 4 (käytetään tekstiviesteille)
 
 # Cache directory
 CACHE_DIR = ".music-analyzer-cache"
+
+# --- Spinner Class ---
+class Spinner:
+    def __init__(self, message="Processing..."):
+        self._spinner = itertools.cycle(['-', '/', '|', '\\'])
+        self._delay = 0.1
+        self._running = False
+        self._spinner_thread = None
+        self._message = message
+        self._stop_event = threading.Event()
+
+    def _spin(self):
+        while not self._stop_event.is_set():
+            sys.stdout.write(f"\r{self._message} {next(self._spinner)}")
+            sys.stdout.flush()
+            time.sleep(self._delay)
+        # Clear the spinner line
+        sys.stdout.write('\r' + ' ' * (len(self._message) + 2) + '\r')
+        sys.stdout.flush()
+
+    def start(self):
+        if not self._running:
+            self._running = True
+            self._stop_event.clear()
+            self._spinner_thread = threading.Thread(target=self._spin)
+            self._spinner_thread.start()
+
+    def stop(self):
+        if self._running:
+            self._stop_event.set()
+            if self._spinner_thread:
+                self._spinner_thread.join() # Wait for thread to finish
+            self._running = False
+# --- End Spinner Class ---
 
 # --- Helper-funktiot ---
 
@@ -86,78 +122,92 @@ def save_to_cache(cache_filepath: str, analysis_data: dict):
 def upload_audio_file(file_path, max_retries=3, initial_delay=2):
     """
     Lataa äänitiedoston Gemini API:lle ja palauttaa tiedostoreferenssin.
-    Sisältää uudelleenyrityksen väliaikaisille palvelinvirheille (esim. 503).
+    Sisältää uudelleenyrityksen ja spinnerin.
     """
     print(f"Ladataan tiedostoa: {file_path}...")
     retries = 0
     delay = initial_delay
     last_exception = None
+    spinner = Spinner(f"Uploading {os.path.basename(file_path)}...") # Spinner for upload
 
-    while retries <= max_retries:
-        try:
-            # Tarkista tiedoston koko ennen latausta (API:lla voi olla rajoituksia)
-            file_size = os.path.getsize(file_path)
-            print(f"Tiedoston koko: {file_size / (1024*1024):.2f} MB")
+    try:
+        spinner.start() # Start spinner before upload attempt
+        while retries <= max_retries:
+            try:
+                # Tarkista tiedoston koko ennen latausta (API:lla voi olla rajoituksia)
+                file_size = os.path.getsize(file_path)
+                # Print size before spinner starts messing with the line too much
+                # print(f"Tiedoston koko: {file_size / (1024*1024):.2f} MB") # Moved print
 
-            audio_file = genai.upload_file(path=file_path)
-            print(f"Tiedoston lataus aloitettu: {audio_file.name}")
+                audio_file = genai.upload_file(path=file_path)
+                # print(f"Tiedoston lataus aloitettu: {audio_file.name}") # Spinner handles message
 
-            # Odotetaan, että tiedosto on käsitelty (tärkeää!)
-            while audio_file.state.name == "PROCESSING":
-                print(f"Odetaan tiedoston {audio_file.name} käsittelyä...")
-                time.sleep(10) # Pidennä odotusaikaa isommille tiedostoille tai hitaammille malleille
-                try:
-                    audio_file = genai.get_file(audio_file.name)
-                except (HttpError, google_exceptions.GoogleAPIError) as e:
-                    # Myös tilan haku voi epäonnistua väliaikaisesti
-                    print(f"Virhe haettaessa tiedoston tilaa: {e}. Oletetaan käsittelyn jatkuvan.")
-                    # Voit lisätä tähän logiikkaa, esim. yrittää uudelleen muutaman kerran ennen luovuttamista
+                # Odotetaan, että tiedosto on käsitelty (tärkeää!)
+                spinner._message = f"Processing {audio_file.name}..." # Update spinner message
+                while audio_file.state.name == "PROCESSING":
+                    # print(f"Odetaan tiedoston {audio_file.name} käsittelyä...") # Spinner handles message
+                    time.sleep(5) # Check status more frequently while spinner is active
+                    try:
+                        audio_file = genai.get_file(audio_file.name)
+                    except (HttpError, google_exceptions.GoogleAPIError) as e:
+                        # Myös tilan haku voi epäonnistua väliaikaisesti
+                        print(f"\nVirhe haettaessa tiedoston tilaa: {e}. Oletetaan käsittelyn jatkuvan.", file=sys.stderr)
+                        # Voit lisätä tähän logiikkaa, esim. yrittää uudelleen muutaman kerran ennen luovuttamista
 
-            if audio_file.state.name == "FAILED":
-                 raise ValueError(f"Tiedoston {file_path} (URI: {audio_file.uri}) lataus tai käsittely epäonnistui.")
-            elif audio_file.state.name == "ACTIVE":
-                print(f"Tiedosto {audio_file.name} (URI: {audio_file.uri}) ladattu ja valmis.")
-                return audio_file
-            else:
-                 print(f"Tiedoston {audio_file.name} tila on odottamaton: {audio_file.state.name}. Yritetään jatkaa...")
-                 return audio_file # Voi olla riskialtista, mutta annetaan mahdollisuus
+                if audio_file.state.name == "FAILED":
+                     raise ValueError(f"Tiedoston {file_path} (URI: {audio_file.uri}) lataus tai käsittely epäonnistui.")
+                elif audio_file.state.name == "ACTIVE":
+                    spinner.stop() # Stop spinner on success
+                    print(f"Tiedosto {audio_file.name} (URI: {audio_file.uri}) ladattu ja valmis.")
+                    return audio_file
+                else:
+                     spinner.stop() # Stop spinner even on unexpected state
+                     print(f"Tiedoston {audio_file.name} tila on odottamaton: {audio_file.state.name}. Yritetään jatkaa...")
+                     return audio_file # Voi olla riskialtista, mutta annetaan mahdollisuus
 
-        except HttpError as e:
-            last_exception = e
-            # Tarkista virhekoodi, yritä uudelleen vain tietyissä tapauksissa (5xx virheet)
-            if e.resp.status >= 500 and retries < max_retries:
-                print(f"Virhe {e.resp.status} ladatessa tiedostoa (yritys {retries + 1}/{max_retries + 1}). Yritetään uudelleen {delay} sekunnin kuluttua...")
-                time.sleep(delay)
-                retries += 1
-                delay *= 2 # Exponential backoff
-            else:
-                print(f"Pysyvä virhe {e.resp.status} ladatessa tiedostoa tai uudelleenyritykset ({max_retries}) käytetty: {e}")
-                import traceback
-                traceback.print_exc()
-                return None # Lopeta uudelleenyritykset
-        except google_exceptions.GoogleAPIError as e: # Laajempi Google API -virheiden käsittely
-            last_exception = e
-            # Voit tarkentaa tätä, jos tiedät mitkä GoogleAPIError-virheet ovat väliaikaisia
-            if retries < max_retries: # Yritä uudelleen yleisille API-virheille varovasti
-                print(f"Google API -virhe ladatessa tiedostoa (yritys {retries + 1}/{max_retries + 1}). Yritetään uudelleen {delay} sekunnin kuluttua: {e}")
-                time.sleep(delay)
-                retries += 1
-                delay *= 2
-            else:
-                print(f"Pysyvä Google API -virhe ladatessa tiedostoa tai uudelleenyritykset ({max_retries}) käytetty: {e}")
-                import traceback
-                traceback.print_exc()
-                return None
-        except Exception as e:
-            # Muut odottamattomat virheet
-            last_exception = e
-            print(f"Odottamaton virhe ladatessa tai käsitellessä tiedostoa {file_path}: {e}")
-            import traceback
-            traceback.print_exc()
-            return None # Älä yritä uudelleen odottamattomissa virheissä
+            except HttpError as e:
+                last_exception = e
+                # Tarkista virhekoodi, yritä uudelleen vain tietyissä tapauksissa (5xx virheet)
+                if e.resp.status >= 500 and retries < max_retries:
+                    spinner.stop() # Stop spinner before printing error and waiting
+                    print(f"\nVirhe {e.resp.status} ladatessa tiedostoa (yritys {retries + 1}/{max_retries + 1}). Yritetään uudelleen {delay} sekunnin kuluttua...", file=sys.stderr)
+                    time.sleep(delay)
+                    retries += 1
+                    delay *= 2 # Exponential backoff
+                    spinner.start() # Restart spinner for next attempt
+                else:
+                    raise # Re-raise the exception if not retrying or permanent error
+            except google_exceptions.GoogleAPIError as e: # Laajempi Google API -virheiden käsittely
+                last_exception = e
+                # Voit tarkentaa tätä, jos tiedät mitkä GoogleAPIError-virheet ovat väliaikaisia
+                if retries < max_retries: # Yritä uudelleen yleisille API-virheille varovasti
+                    spinner.stop() # Stop spinner before printing error and waiting
+                    print(f"\nGoogle API -virhe ladatessa tiedostoa (yritys {retries + 1}/{max_retries + 1}). Yritetään uudelleen {delay} sekunnin kuluttua: {e}", file=sys.stderr)
+                    time.sleep(delay)
+                    retries += 1
+                    delay *= 2
+                    spinner.start() # Restart spinner for next attempt
+                else:
+                    raise # Re-raise the exception if not retrying or permanent error
+            except Exception as e:
+                # Muut odottamattomat virheet
+                last_exception = e
+                raise # Re-raise immediately for unexpected errors
 
-    # Jos kaikki uudelleenyritykset epäonnistuivat
-    print(f"Tiedoston {file_path} lataus epäonnistui {max_retries + 1} yrityksen jälkeen.")
+    except Exception as e: # Catch exceptions raised within the loop or initial setup
+        spinner.stop() # Ensure spinner stops on any exception
+        print(f"\nOdottamaton virhe ladatessa tai käsitellessä tiedostoa {file_path}: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return None # Return None on failure
+    finally:
+        # Ensure spinner is stopped no matter what
+        if spinner._running:
+            spinner.stop()
+
+
+    # Jos kaikki uudelleenyritykset epäonnistuivat (should be caught by exceptions now)
+    # print(f"Tiedoston {file_path} lataus epäonnistui {max_retries + 1} yrityksen jälkeen.")
     return None
 
 def build_prompt(audio_file_uri):
@@ -191,7 +241,7 @@ Pura siitä seuraavat musiikilliset tiedot mahdollisimman tarkasti ja jäsennell
         `1.5 - Hi-Hat (suljettu)`
 
 5.  **Lead-Melodia (Kanava 1):**
-    *   Tunnista päämelodiaa soittava instrumentti (jos mahdollista). Mainitse se otsikon alla ennen nuottilistaa.
+    *   Tunnista päämelodiaa soittava instrumentti (jos mahdollista). Mainitse se otsikon alla ennen nuottilista.
     *   Listaa melodian nuotit: alkamisaika sekunteina, nuotin nimi oktaavilla (esim. C4, F#5, Bb3), kesto sekunteina. Käytä TÄSMÄLLEEN tätä muotoa per rivi: `[aika_sekunteina] - [nuotti] - [kesto_sekunteina]`
     *   Esimerkki:
         `Instrumentti: Piano`
@@ -719,7 +769,7 @@ if __name__ == "__main__":
         if not force_analyze and cache_filepath and os.path.exists(cache_filepath) and use_cache != 'e': # Avoid redundant message if forced
              print("Analyysia ei löytynyt välimuistista tai uudelleenanalyysi valittu, suoritetaan API-kutsu...")
         # 1. Lataa audio Geminiin
-        uploaded_file = upload_audio_file(audio_file_path)
+        uploaded_file = upload_audio_file(audio_file_path) # Spinner is now inside this function
         if not uploaded_file:
             print("Audion lataus epäonnistui. Ohjelma lopetetaan.")
             exit()
@@ -736,8 +786,10 @@ if __name__ == "__main__":
         # Käytä URIa promptissa
         prompt_content = build_prompt(file_identifier)
         print("\nLähetetään pyyntö Gemini API:lle mallilla {}...".format(MODEL_NAME))
-        print("Tämä voi kestää jonkin aikaa riippuen äänitiedoston pituudesta ja mallista.")
+        # print("Tämä voi kestää jonkin aikaa riippuen äänitiedoston pituudesta ja mallista.") # Spinner will indicate activity
 
+        api_spinner = Spinner("Waiting for Gemini API response...") # Spinner for API call
+        response = None # Initialize response to None
         try:
             model = genai.GenerativeModel(MODEL_NAME)
             # generation_config = genai.types.GenerationConfig(
@@ -746,24 +798,18 @@ if __name__ == "__main__":
             # Käytä stream=False saadaksesi koko vastauksen kerralla
 
             # Try passing prompt and file object in a list, similar to 'contents'
+            api_spinner.start() # Start spinner before API call
             response = model.generate_content(
                 [prompt_content, uploaded_file], # Pass prompt string and uploaded file object
                 stream=False
                 #generation_config=generation_config
             )
+            api_spinner.stop() # Stop spinner after getting response
 
             # Tarkista, että vastaus on olemassa ja sisältää tekstiä
             if not response or not hasattr(response, 'text') or not response.text:
                  print("\nVirhe: Gemini API ei palauttanut kelvollista tekstivastausta.")
-                 print("Mahdollisia syitä: API-virhe, malli ei pystynyt käsittelemään pyyntöä, vastausmuoto tuntematon.")
-                 # Tulosta koko vastausobjekti debuggausta varten, jos se on olemassa
-                 if response:
-                      print("\n--- Koko Gemini-vastaus (Debug) ---")
-                      try:
-                          print(response)
-                      except Exception as print_e:
-                          print(f"Ei voitu tulostaa vastausta: {print_e}")
-                      print("-----------------------------------\n")
+                 # ... (rest of error handling) ...
                  exit()
 
 
@@ -794,10 +840,15 @@ if __name__ == "__main__":
 
 
         except Exception as e:
+            api_spinner.stop() # Ensure spinner stops on exception
             print(f"\nOhjelman suorituksessa tapahtui odottamaton virhe API-kutsun aikana: {e}")
             import traceback
             traceback.print_exc() # Tulostaa yksityiskohtaisemman virheenjäljityksen
             exit() # Exit if API call or parsing failed critically
+        finally:
+            # Ensure spinner is stopped no matter what
+            if api_spinner._running:
+                api_spinner.stop()
 
     # --- End of API call block ---
 
