@@ -622,10 +622,10 @@ if __name__ == "__main__":
 
 
         print("Gemini API -vastaus vastaanotettu.")
-        # Tulosta raaka vastaus halutessasi debuggausta varten
-        # print("\n--- Gemini Raw Response ---")
-        # print(response.text)
-        # print("---------------------------\n")
+        # Tulosta raaka vastaus AINA debuggausta varten, jos jäsentäminen epäonnistuu
+        print("\n--- Gemini Raw Response ---")
+        print(response.text)
+        print("---------------------------\n")
 
 
         # 3. Jäsennä vastaus
