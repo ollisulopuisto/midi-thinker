@@ -207,7 +207,14 @@ def show_analysis_results(title: str, analysis_data: dict | None):
 
         # Add any extra keys found in the data that weren't in the display_order
         for key, value in analysis_data.items():
-            if key not in display_order:
+            if key == "sections" and isinstance(value, list):
+                lines.append("\nSong Sections:")
+                for section in value:
+                    name = section.get("name", "Unknown")
+                    start = section.get("start_tick", 0)
+                    end = section.get("end_tick", 0)
+                    lines.append(f"  - {name}: {start} to {end} ticks")
+            elif key not in display_order:
                  # Simple formatting for unexpected keys
                  friendly_name = key.replace('_', ' ').title()
                  lines.append(f"{friendly_name}: {value}")

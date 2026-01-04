@@ -267,6 +267,10 @@ Based on the provided data (especially the notes across all tracks), provide a d
 - \"time_signature\": String (e.g., \"4/4\", \"3/4\") - Confirm the primary time signature ({ts_str} was detected initially).
 - \"style_genre\": String - Briefly describe the likely musical style or genre (e.g., \"Classical\", \"Jazz Ballad\", \"Electronic Dance\").
 - \"harmony_description\": String - Briefly describe the basic harmonic structure (e.g., \"Simple diatonic chords\", \"Modal harmony\", \"Uses extended jazz chords\").
+- \"sections\": List of objects - Identify the likely song sections (e.g., Intro, Verse, Chorus, Outro). Each object should have:
+    - \"name\": String (the name of the section)
+    - \"start_tick\": Integer (absolute tick where it starts)
+    - \"end_tick\": Integer (absolute tick where it ends)
 
 Example JSON Output:
 ```json
@@ -275,7 +279,11 @@ Example JSON Output:
   "tempo_bpm": 140,
   "time_signature": "4/4",
   "style_genre": "Pop Rock",
-  "harmony_description": "Primarily uses I-V-vi-IV progression."
+  "harmony_description": "Primarily uses I-V-vi-IV progression.",
+  "sections": [
+    {{ "name": "Intro", "start_tick": 0, "end_tick": 1920 }},
+    {{ "name": "Verse 1", "start_tick": 1920, "end_tick": 5760 }}
+  ]
 }}
 ```
 
@@ -327,7 +335,7 @@ Analysis JSON:
         show_error("Analysis Error", error_msg)
         return None
 
-def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_indices: list[int], style_variation: str = ""):
+def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_indices: list[int], style_variation: str = "", sections: list = None):
     """
     Constructs a prompt and calls the Gemini API to generate extended notes
     for the specified target tracks, using all tracks as context.
@@ -355,6 +363,9 @@ def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_t
                              f"(target duration: around {target_extension_ticks} ticks). "
                              f"Generate new notes for the following tracks: {tracks_str}. "
                              f"Use the existing notes from all tracks as musical context.")
+        if sections:
+            sections_str = ", ".join([f"{s.get('name')} ({s.get('start_tick')}-{s.get('end_tick')})" for s in sections])
+            extension_request += f" The current song structure is: {sections_str}."
         if style_variation:
             extension_request += f" Apply the following style variation: '{style_variation}'."
 
@@ -780,7 +791,8 @@ def main():
             mvp_json_data,
             settings['bars_to_extend'],
             target_track_indices,
-            settings.get('style_variation', '')
+            settings.get('style_variation', ''),
+            analysis_result_data.get('sections') if analysis_result_data else None
         )
     elif mode == 'complement':
         generated_notes_json_text = call_gemini_for_complement(

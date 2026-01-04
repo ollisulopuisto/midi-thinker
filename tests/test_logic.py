@@ -105,6 +105,29 @@ def test_parse_gemini_multi_track_complement():
     assert len(parsed_data["tracks"]) == 2
     assert parsed_data["tracks"][1]["is_drum"] is True
 
+def test_parse_gemini_analysis_with_sections():
+    """Tests parsing of an analysis response that includes song sections."""
+    analysis_json = """
+    ```json
+    {
+      "key_signature": "Cmaj",
+      "tempo_bpm": 120,
+      "time_signature": "4/4",
+      "style_genre": "Pop",
+      "harmony_description": "I-V-vi-IV",
+      "sections": [
+        { "name": "Intro", "start_tick": 0, "end_tick": 1920 },
+        { "name": "Verse", "start_tick": 1920, "end_tick": 3840 }
+      ]
+    }
+    ```
+    """
+    parsed_data = imagine_music.parse_gemini_response(analysis_json)
+    assert parsed_data is not None
+    assert "sections" in parsed_data
+    assert len(parsed_data["sections"]) == 2
+    assert parsed_data["sections"][1]["name"] == "Verse"
+
 # --- Tests for imagine-music.py ---
 
 def test_parse_midi_to_mvp_json_type0():
