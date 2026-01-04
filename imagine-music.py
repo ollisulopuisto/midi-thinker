@@ -7,7 +7,8 @@ from google import genai
 from dotenv import load_dotenv
 import re
 import hashlib
-from tui import get_user_input, select_input_file, show_error, show_success, show_analysis_results
+import random
+from tui import get_user_input, select_input_file, show_error, show_success_with_action, show_analysis_results
 
 # Default values if not found in MIDI
 DEFAULT_TEMPO = 500000  # 120 bpm
@@ -656,6 +657,19 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
     print(f"Converted {len(generated_notes)} notes into {len(midi_messages)} MIDI messages.")
     return midi_messages
 
+
+def humanize_mido_events(messages, velocity_range=10, timing_range=5):
+    """Applies subtle random variations to mido messages (velocity and delta time)."""
+    for msg in messages:
+        if msg.type == 'note_on' and msg.velocity > 0:
+            msg.velocity = max(1, min(127, msg.velocity + random.randint(-velocity_range, velocity_range)))
+
+        # Timing jitter (delta time)
+        jitter = random.randint(-timing_range, timing_range)
+        msg.time = max(0, msg.time + jitter)
+    return messages
+
+
 def main():
     load_dotenv() # Load .env file
 
@@ -904,7 +918,11 @@ def main():
 
             print(f"\nProcessing generated notes for Track {track_idx}...")
             new_midi_events = generated_notes_to_midi_events(notes, start_offset)
-            
+
+            if settings.get('humanize'):
+                print(f"  Humanizing events for Track {track_idx}...")
+                humanize_mido_events(new_midi_events)
+
             # Find the actual mido track
             actual_target_mido_track_index = track_idx if midi_type != 0 else 0
             if 0 <= actual_target_mido_track_index < len(midi_file.tracks):
@@ -947,6 +965,11 @@ def main():
             new_track.append(mido.Message('program_change', program=instr_prog, time=0, channel=channel))
 
             new_midi_events = generated_notes_to_midi_events(notes, start_offset)
+
+            if settings.get('humanize'):
+                print(f"  Humanizing events for '{track_name}'...")
+                humanize_mido_events(new_midi_events)
+
             # Adjust events to use correct channel
             for msg in new_midi_events:
                 msg.channel = channel
@@ -971,7 +994,7 @@ def main():
             success_msg += " (Note: Original was Type 0, output file is Type 1)."
 
         print(f"\n{success_msg}")
-        show_success("Operation Successful", success_msg)
+        show_success_with_action("Operation Successful", success_msg, output_midi_path)
     except Exception as e:
         error_msg = f"Error saving MIDI file: {e}"
         print(error_msg, file=sys.stderr)

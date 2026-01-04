@@ -10,6 +10,7 @@ import itertools
 import argparse
 from dotenv import load_dotenv
 import midi_generator
+from tui import open_file_folder
 
 # --- Konfiguraatio ---
 load_dotenv()
@@ -201,6 +202,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Analysoi äänitiedosto Gemini API:lla ja luo MIDI-tiedoston.")
     parser.add_argument("audio_file", help="Polku syötettävään äänitiedostoon")
     parser.add_argument("--force-analyze", action="store_true", help="Ohita välimuisti")
+    parser.add_argument("--open", action="store_true", help="Avaa kansio tallennuksen jälkeen")
     args = parser.parse_args()
 
     audio_file_path = args.audio_file
@@ -266,6 +268,8 @@ if __name__ == "__main__":
     if parsed_data:
         output_filename = os.path.splitext(os.path.basename(audio_file_path))[0] + ".mid"
         try:
-            midi_generator.create_midi_file(parsed_data, output_filename)
+            midi_generator.create_midi_file(parsed_data, output_filename, humanize=True)
+            if args.open:
+                open_file_folder(output_filename)
         except Exception:
              print("MIDI-tiedoston luonti epäonnistui.", file=sys.stderr)

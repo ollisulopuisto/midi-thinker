@@ -1,5 +1,7 @@
 import os
-from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, message_dialog, checkboxlist_dialog
+import subprocess
+import platform
+from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, message_dialog, checkboxlist_dialog, button_dialog
 from prompt_toolkit.validation import Validator, ValidationError
 from prompt_toolkit.completion import PathCompleter
 
@@ -164,8 +166,44 @@ def get_user_input(input_path: str, num_tracks: int, midi_type: int = 1):
     # It's ok if this is None (user pressed cancel) or empty, we'll just ignore it.
     settings['style_variation'] = style_variation if style_variation else ""
 
+    # 5. Humanize Option
+    humanize = button_dialog(
+        title='Humanize Output',
+        text='Do you want to apply subtle randomization to velocities and timing (Humanize)?',
+        buttons=[
+            ('Yes', True),
+            ('No', False)
+        ]
+    ).run()
+    settings['humanize'] = humanize if humanize is not None else False
 
     return settings
+
+def open_file_folder(file_path):
+    """Opens the folder containing the file in the OS file explorer."""
+    folder = os.path.dirname(os.path.abspath(file_path))
+    if platform.system() == "Windows":
+        os.startfile(folder)
+    elif platform.system() == "Darwin":
+        subprocess.Popen(["open", folder])
+    else:
+        try:
+            subprocess.Popen(["xdg-open", folder])
+        except Exception:
+            pass # Fallback if xdg-open not available
+
+def show_success_with_action(title, text, file_path):
+    """Displays a success message and offers to open the containing folder."""
+    result = button_dialog(
+        title=title,
+        text=text,
+        buttons=[
+            ('Open Folder', True),
+            ('Close', False)
+        ]
+    ).run()
+    if result:
+        open_file_folder(file_path)
 
 def show_error(title, text):
     """Displays an error message dialog."""
