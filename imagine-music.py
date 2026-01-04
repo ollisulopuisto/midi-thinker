@@ -392,7 +392,7 @@ Analysis JSON:
         show_error("Analysis Error", error_msg)
         return None
 
-def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_index: int):
+def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_index: int, style_variation: str = ""):
     """
     Constructs a prompt and calls the Gemini API to generate extended notes
     for the specified target track, using all tracks as context.
@@ -419,6 +419,8 @@ def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_t
                              f"(target duration: around {target_extension_ticks} ticks). "
                              f"Generate new notes ONLY for Track {target_track_index}. "
                              f"Use the existing notes from all tracks as musical context.")
+        if style_variation:
+            extension_request += f" Apply the following style variation: '{style_variation}'."
         target_instrument = mvp_json_data["tracks"][target_track_index].get("instrument_program", 0)
 
 
@@ -484,7 +486,7 @@ Generated Notes JSON (for Track {target_track_index}):
         show_error("Gemini Error", error_msg)
         return None
 
-def call_gemini_for_complement(mvp_json_data: dict, complement_type: str):
+def call_gemini_for_complement(mvp_json_data: dict, complement_type: str, style_variation: str = ""):
     """
     (Post-MVP)
     Constructs a prompt and calls the Gemini API to generate a new complementary track.
@@ -513,6 +515,9 @@ def call_gemini_for_complement(mvp_json_data: dict, complement_type: str):
              generation_request += " Create an independent melodic line that interacts interestingly with the existing melody/melodies."
         else:
              generation_request += " Generate notes that musically fit well with the existing material."
+        
+        if style_variation:
+            generation_request += f" Apply the following style variation: '{style_variation}'."
 
 
         prompt = f"""
@@ -814,10 +819,15 @@ def main():
         generated_notes_json_text = call_gemini_for_extension(
             mvp_json_data,
             settings['bars_to_extend'],
-            target_track_index
+            target_track_index,
+            settings.get('style_variation', '')
         )
     elif mode == 'complement':
-        generated_notes_json_text = call_gemini_for_complement(mvp_json_data, settings['complement_type'])
+        generated_notes_json_text = call_gemini_for_complement(
+            mvp_json_data,
+            settings['complement_type'],
+            settings.get('style_variation', '')
+        )
 
     # Check if the call itself failed (returned None)
     if generated_notes_json_text is None:

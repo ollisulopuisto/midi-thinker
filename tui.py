@@ -127,6 +127,15 @@ def get_user_input(input_path: str, num_tracks: int, midi_type: int = 1):
         if comp_type is None:
             return None # User cancelled
         settings['complement_type'] = comp_type
+    
+    # 4. Get Optional Style/Variation
+    style_variation = input_dialog(
+        title='Style/Variation (Optional)',
+        text='Describe any variation in style, rhythm, or dynamics (e.g., "more energetic", "quieter and sparser"):'
+    ).run()
+    # It's ok if this is None (user pressed cancel) or empty, we'll just ignore it.
+    settings['style_variation'] = style_variation if style_variation else ""
+
 
     return settings
 
