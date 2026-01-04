@@ -367,6 +367,9 @@ Generate new musical material that extends the piece in a similar style.
 **IMPORTANT**: Generate new notes for the following tracks: {tracks_str}.
 You can use the content of other tracks as musical context for your generation.
 
+**OPTIONAL**: You may also suggest shifts in tempo or key signature at the start of the extension.
+To do this, include a \"meta_changes\" key in your output JSON.
+
 Input Data (Multiple Tracks):
 ```json
 {json.dumps(mvp_json_data, indent=2)}
@@ -374,7 +377,13 @@ Input Data (Multiple Tracks):
 
 Request: {extension_request}
 
-Output ONLY a JSON object where each key is a track index (e.g., \"0\", \"1\") and the value is a list of note objects for that track.
+Output ONLY a JSON object containing:
+1. A key for each track index (e.g., \"0\", \"1\") with a list of note objects.
+2. (Optional) A \"meta_changes\" key with a list of objects like:
+   - {{ \"type\": \"tempo\", \"bpm\": 140, \"tick\": 0 }}
+   - {{ \"type\": \"key_signature\", \"key\": \"G\", \"tick\": 0 }}
+   Note: \"tick\" is relative to the start of the extension.
+
 Each note object must have \"pitch\", \"start_tick\", \"duration_tick\", and \"velocity\".
 The \"start_tick\" for the new notes should be relative to the beginning of the *extension* (i.e., start from 0 or a small positive value).
 Do not include the original notes in the output.
@@ -384,11 +393,10 @@ Example output format:
 ```json
 {{
   \"0\": [
-    {{ \"pitch\": 60, \"start_tick\": 0, \"duration_tick\": 480, \"velocity\": 90 }},
-    {{ \"pitch\": 62, \"start_tick\": 480, \"duration_tick\": 480, \"velocity\": 90 }}
+    {{ \"pitch\": 60, \"start_tick\": 0, \"duration_tick\": 480, \"velocity\": 90 }}
   ],
-  \"1\": [
-    {{ \"pitch\": 48, \"start_tick\": 0, \"duration_tick\": 960, \"velocity\": 80 }}
+  \"meta_changes\": [
+    {{ \"type\": \"tempo\", \"bpm\": 130, \"tick\": 0 }}
   ]
 }}
 ```
@@ -809,7 +817,52 @@ def main():
     if mode == 'extend':
         target_track_indices = settings['target_track_indices']
         
+        # 1. Apply Suggested Meta Changes (if any)
+        suggested_meta = generated_notes.get("meta_changes", [])
+        if suggested_meta:
+            print("\nApplying suggested musical shifts (tempo/key)...")
+            # In Type 1, meta messages usually go in Track 0.
+            # In Type 0, they go in the single track.
+            meta_track_index = 0
+            if meta_track_index < len(midi_file.tracks):
+                meta_track = midi_file.tracks[meta_track_index]
+                
+                # We want to insert these at the original end of the track.
+                # However, track messages use delta times. 
+                # Calculating the correct insertion point in a delta-timed track is tricky.
+                # A safer approach: append a new meta track if Type 1, or just print warning.
+                # Simplest for now: Add them to the end of the meta track before we save.
+                
+                # Remove end_of_track if present
+                if meta_track and meta_track[-1].is_meta and meta_track[-1].type == 'end_of_track':
+                    meta_track.pop()
+
+                for change in suggested_meta:
+                    change_type = change.get("type")
+                    # Note: We assume 'tick' 0 means 'start of extension'
+                    # which corresponds to the current state of the track after notes were parsed.
+                    if change_type == "tempo":
+                        bpm = change.get("bpm")
+                        if bpm:
+                            tempo_usec = mido.bpm2tempo(bpm)
+                            meta_track.append(mido.MetaMessage('set_tempo', tempo=tempo_usec, time=0))
+                            print(f"  - Set tempo to {bpm} BPM")
+                    elif change_type == "key_signature":
+                        key = change.get("key")
+                        if key:
+                            try:
+                                meta_track.append(mido.MetaMessage('key_signature', key=key, time=0))
+                                print(f"  - Set key signature to {key}")
+                            except ValueError:
+                                print(f"  - Warning: Invalid key signature '{key}' suggested. Skipping.")
+                
+                meta_track.append(mido.MetaMessage('end_of_track', time=0))
+
+        # 2. Apply Generated Notes to Tracks
         for track_idx_str, notes in generated_notes.items():
+            if track_idx_str == "meta_changes":
+                continue # Already handled above
+            
             try:
                 track_idx = int(track_idx_str)
             except ValueError:

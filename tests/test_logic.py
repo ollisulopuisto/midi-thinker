@@ -54,6 +54,28 @@ def test_parse_gemini_response_empty_string():
     parsed_data = music_analyzer.parse_gemini_response("")
     assert parsed_data is None
 
+def test_parse_gemini_extension_with_meta():
+    """Tests parsing of a hypothetical extension response that includes meta changes."""
+    # This simulates what we WANT Gemini to be able to return
+    extension_json = """
+    ```json
+    {
+      "0": [
+        { "pitch": 60, "start_tick": 0, "duration_tick": 480, "velocity": 90 }
+      ],
+      "meta_changes": [
+        { "type": "tempo", "bpm": 140, "tick": 0 },
+        { "type": "key_signature", "key": "G", "tick": 0 }
+      ]
+    }
+    ```
+    """
+    parsed_data = imagine_music.parse_gemini_response(extension_json)
+    assert parsed_data is not None
+    assert "0" in parsed_data
+    assert "meta_changes" in parsed_data
+    assert parsed_data["meta_changes"][0]["bpm"] == 140
+
 # --- Tests for imagine-music.py ---
 
 def test_parse_midi_to_mvp_json_type0():
