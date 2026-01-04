@@ -14,7 +14,11 @@ This project aims to create a tool that leverages the Google Gemini API to help 
     *   **Complement Arrangement:** Generate an entire new arrangement (multiple tracks) to complement the existing piece. Includes instrument selection and drum track support.
 *   **Creative Control:**
     *   **Style/Variation:** Provide textual hints (e.g., "more energetic", "syncopated rhythm") to guide Gemini's generation.
+    *   **Humanization:** Optional subtle randomization of velocities and timing for a more natural, live-performance feel.
     *   **Intelligent Transitions:** Supports suggested musical shifts (tempo, key, time signature changes) at transition points.
+*   **Production Workflow:**
+    *   **pretty_midi Integration:** Uses high-level musical structures for robust MIDI generation.
+    *   **DAW Friendly:** Offers a quick "Open Folder" action after saving to streamline dragging files into Ableton Live or other DAWs.
 *   **Robust Pipeline:** Uses the new `google-genai` SDK with structured JSON parsing for reliable results.
 *   **TUI Interface:** Interactive terminal interface for file selection, settings, and displaying analysis results.
 *   **Automated Testing:** Comprehensive test suite for MIDI parsing and AI response handling.
@@ -73,11 +77,10 @@ uv run ruff check .
 ## Future Enhancements (Post-MVP)
 
 *   **Advanced Generation:**
-    *   Control over velocity layers and humanization.
+    *   Control over velocity layers.
     *   Interactive iterative refinement (feedback loop with Gemini).
 *   **Integration:**
-    *   Support for `pretty_midi` for higher-level structural manipulation.
-    *   Direct export to DAW-friendly formats or XML.
+    *   Direct export to DAW-friendly XML.
 *   **Evaluation:**
     *   Musical rule-based validation of generated output.
 *   **Audio-to-MIDI:** Further refine the `music-analyzer.py` tool for high-fidelity transcription.
