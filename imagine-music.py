@@ -437,7 +437,7 @@ Generated Notes JSON:
 def call_gemini_for_complement(mvp_json_data: dict, complement_type: str, style_variation: str = ""):
     """
     (Post-MVP)
-    Constructs a prompt and calls the Gemini API to generate a new complementary track.
+    Constructs a prompt and calls the Gemini API to generate new complementary tracks.
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -454,13 +454,13 @@ def call_gemini_for_complement(mvp_json_data: dict, complement_type: str, style_
         bpm = round(60_000_000 / tempo_microseconds) if tempo_microseconds > 0 else "N/A"
 
         # Define the generation request based on complement_type
-        generation_request = f"Generate a new musical part to complement the existing tracks. The new part should be a '{complement_type}'."
+        generation_request = f"Generate new musical parts to complement the existing tracks. The parts should be a '{complement_type}'."
         if "bassline" in complement_type.lower():
              generation_request += " Focus on lower registers and provide harmonic support."
         elif "harmony" in complement_type.lower():
              generation_request += " Focus on chords or pads that fit the existing harmony."
         elif "counter-melody" in complement_type.lower():
-             generation_request += " Create an independent melodic line that interacts interestingly with the existing melody/melodies."
+             generation_request += " Create independent melodic lines that interact interestingly with the existing melody/melodies."
         else:
              generation_request += " Generate notes that musically fit well with the existing material."
         
@@ -471,7 +471,7 @@ def call_gemini_for_complement(mvp_json_data: dict, complement_type: str, style_
         prompt = f"""
 You are a MIDI music composition assistant.
 Analyze the provided musical data (JSON format, multiple tracks).
-Generate a *new* musical part as specified in the request.
+Generate one or more *new* musical tracks as specified in the request.
 
 Input Data (Multiple Tracks):
 ```json
@@ -481,21 +481,33 @@ Input Data (Multiple Tracks):
 Request: {generation_request}
 The piece is in {key_signature} at approximately {bpm} BPM.
 
-Output ONLY the JSON representation of the *new* notes for the *new* complementary track.
-The JSON should be a list of note objects, each with "pitch", "start_tick", "duration_tick", and "velocity".
-The "start_tick" for the new notes should be relative to the beginning of the piece (i.e., start from 0 or a small positive value, aligning with the original structure).
+Output ONLY a JSON object with a \"tracks\" key, which is a list of track objects.
+Each track object should contain:
+- \"name\": String (e.g., \"Bassline\", \"Pad\")
+- \"instrument_program\": Integer (General MIDI program number)
+- \"is_drum\": Boolean (true if this is a drum track on Channel 10)
+- \"notes\": A list of note objects, each with \"pitch\", \"start_tick\", \"duration_tick\", and \"velocity\".
+
+The \"start_tick\" for the new notes should be relative to the beginning of the piece (i.e., start from 0 or a small positive value, aligning with the original structure).
 Do not include the original notes in the output.
 Ensure the output is valid JSON.
 
-Example output format for the new complementary track:
+Example output format:
 ```json
-[
-  {{ "pitch": 48, "start_tick": 0, "duration_tick": 960, "velocity": 80 }},
-  {{ "pitch": 50, "start_tick": 960, "duration_tick": 960, "velocity": 80 }}
-]
+{{
+  \"tracks\": [
+    {{
+      \"name\": \"Acoustic Bass\",
+      \"instrument_program\": 32,
+      \"notes\": [
+        {{ \"pitch\": 36, \"start_tick\": 0, \"duration_tick\": 960, \"velocity\": 80 }}
+      ]
+    }}
+  ]
+}}
 ```
 
-Generated Notes JSON (for the new complementary track):
+Generated Notes JSON:
 """
         print("\n--- Sending Complement Prompt to Gemini ---")
         # print(prompt) # Uncomment to debug
@@ -774,7 +786,8 @@ def main():
         generated_notes_json_text = call_gemini_for_complement(
             mvp_json_data,
             settings['complement_type'],
-            settings.get('style_variation', '')
+            settings.get('style_variation', ''),
+            settings.get('instrument_program')
         )
 
     # Check if the call itself failed (returned None)
@@ -839,8 +852,6 @@ def main():
 
                 for change in suggested_meta:
                     change_type = change.get("type")
-                    # Note: We assume 'tick' 0 means 'start of extension'
-                    # which corresponds to the current state of the track after notes were parsed.
                     if change_type == "tempo":
                         bpm = change.get("bpm")
                         if bpm:
@@ -855,6 +866,12 @@ def main():
                                 print(f"  - Set key signature to {key}")
                             except ValueError:
                                 print(f"  - Warning: Invalid key signature '{key}' suggested. Skipping.")
+                    elif change_type == "time_signature":
+                        num = change.get("numerator")
+                        den = change.get("denominator")
+                        if num and den:
+                            meta_track.append(mido.MetaMessage('time_signature', numerator=num, denominator=den, time=0))
+                            print(f"  - Set time signature to {num}/{den}")
                 
                 meta_track.append(mido.MetaMessage('end_of_track', time=0))
 
@@ -890,32 +907,41 @@ def main():
                 print(f"Error: Track index {track_idx} out of range for the loaded MIDI file.", file=sys.stderr)
 
     elif mode == 'complement':
-        new_midi_events = generated_notes_to_midi_events(generated_notes, start_offset)
-        # --- Check MIDI type before adding track ---
-        original_type = midi_file.type # Store original type before potentially changing it
+        if not isinstance(generated_notes, dict) or "tracks" not in generated_notes:
+             error_msg = f"Parsed data from Gemini complement response missing 'tracks' key. Got type: {type(generated_notes)}"
+             print(error_msg, file=sys.stderr)
+             show_error("Parsing Error", error_msg)
+             sys.exit(1)
+
+        original_type = midi_file.type
         if midi_file.type == 0:
-            print("\nWarning: Original MIDI is Type 0. Adding a track requires converting the output file to Type 1.", file=sys.stderr)
-            midi_file.type = 1 # Change type to allow multiple tracks for saving
+            print("\nWarning: Original MIDI is Type 0. Adding tracks requires converting to Type 1.", file=sys.stderr)
+            midi_file.type = 1
 
-        print(f"\nCreating a new track for the '{settings['complement_type']}' complement...")
-        new_track = mido.MidiTrack()
-        midi_file.tracks.append(new_track)
-        new_track_index = len(midi_file.tracks) - 1
-        print(f"Appended new Track {new_track_index}.")
+        for gen_track in generated_notes["tracks"]:
+            track_name = gen_track.get("name", "New Track")
+            instr_prog = gen_track.get("instrument_program", 0)
+            is_drum = gen_track.get("is_drum", False)
+            notes = gen_track.get("notes", [])
 
-        # Add a program change message at the beginning of the new track
-        instrument_program = settings['instrument_program'] # Use user-selected instrument
-        print(f"Setting instrument for new track to Program {instrument_program}.")
-        new_track.append(mido.Message('program_change', program=instrument_program, time=0))
+            print(f"\nCreating new track: '{track_name}' (Instrument {instr_prog}, Drum: {is_drum})...")
+            new_track = mido.MidiTrack()
+            midi_file.tracks.append(new_track)
+            new_track.append(mido.MetaMessage('track_name', name=track_name, time=0))
+            
+            # Set channel: 9 for drums, else find next available or just 0
+            # For simplicity, if drum use 9, else use 0 (mido handles overlap ok-ish, but not ideal)
+            channel = 9 if is_drum else 0
+            new_track.append(mido.Message('program_change', program=instr_prog, time=0, channel=channel))
 
-        # Add the generated notes
-        print(f"Adding {len(new_midi_events)} generated events to the new track...")
-        new_track.extend(new_midi_events)
+            new_midi_events = generated_notes_to_midi_events(notes, start_offset)
+            # Adjust events to use correct channel
+            for msg in new_midi_events:
+                msg.channel = channel
 
-        # Add end_of_track message to the new track
-        new_track.append(mido.MetaMessage('end_of_track', time=0))
-
-        print("Events added to new track.")
+            new_track.extend(new_midi_events)
+            new_track.append(mido.MetaMessage('end_of_track', time=0))
+            print(f"Added {len(new_midi_events)} events to '{track_name}'.")
 
     # --- Save MIDI File ---
     try:

@@ -65,7 +65,8 @@ def test_parse_gemini_extension_with_meta():
       ],
       "meta_changes": [
         { "type": "tempo", "bpm": 140, "tick": 0 },
-        { "type": "key_signature", "key": "G", "tick": 0 }
+        { "type": "key_signature", "key": "G", "tick": 0 },
+        { "type": "time_signature", "numerator": 3, "denominator": 4, "tick": 0 }
       ]
     }
     ```
@@ -75,6 +76,34 @@ def test_parse_gemini_extension_with_meta():
     assert "0" in parsed_data
     assert "meta_changes" in parsed_data
     assert parsed_data["meta_changes"][0]["bpm"] == 140
+    assert parsed_data["meta_changes"][2]["numerator"] == 3
+
+def test_parse_gemini_multi_track_complement():
+    """Tests parsing of a complement response that suggests multiple new tracks."""
+    complement_json = """
+    ```json
+    {
+      "tracks": [
+        {
+          "name": "Bassline",
+          "instrument_program": 32,
+          "notes": [{ "pitch": 36, "start_tick": 0, "duration_tick": 480, "velocity": 80 }]
+        },
+        {
+          "name": "Drums",
+          "instrument_program": 0,
+          "is_drum": true,
+          "notes": [{ "pitch": 36, "start_tick": 0, "duration_tick": 60, "velocity": 100 }]
+        }
+      ]
+    }
+    ```
+    """
+    parsed_data = imagine_music.parse_gemini_response(complement_json)
+    assert parsed_data is not None
+    assert "tracks" in parsed_data
+    assert len(parsed_data["tracks"]) == 2
+    assert parsed_data["tracks"][1]["is_drum"] is True
 
 # --- Tests for imagine-music.py ---
 
