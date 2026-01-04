@@ -6,21 +6,18 @@ This project aims to create a tool that leverages the Google Gemini API to help 
 
 ## Current Functionality
 
-*   Loads a standard MIDI file (`.mid`) via command-line argument or TUI file selector.
-*   Extracts basic information (first tempo, first key signature, first time signature).
-*   Extracts notes and the first instrument program number (`program_change`) from *all* tracks.
-*   Sends this information (all tracks) to the Gemini API for detailed analysis (key, tempo, time sig, style, harmony), with caching.
-*   **Displays the detailed analysis results to the user.**
-*   Prompts the user via TUI to select a mode:
-    *   **Extend Track**: Choose a track and number of bars to extend.
-    *   **Add Complementary Track**: Specify the type of complement (e.g., bassline).
-*   Calculates the target extension length in MIDI ticks based on the time signature and tempo (for Extend mode).
-*   Requests the Gemini API to generate new notes based on the selected mode:
-    *   Extend: Generates notes for the *selected track* using all tracks as context.
-    *   Complement: Generates notes for a *new track*.
-*   Appends the generated notes to the end of the selected track (Extend) or adds them as a new track with an appropriate instrument (Complement).
-*   Saves the modified MIDI data to a user-specified output file.
-*   Includes basic error handling for file loading, API calls (including blocked prompts), and response parsing, with user feedback via TUI. *(New)*
+*   **MIDI Input:** Loads standard MIDI files (`.mid`), supporting both Type 0 and Type 1.
+*   **Deep Analysis:** Extracts all notes, instruments, and meta-message changes (tempo, key, time signature).
+*   **Structural Awareness:** Uses Gemini to identify song sections (e.g., Intro, Verse, Chorus) and musical style.
+*   **Multi-Track Generation:** 
+    *   **Extend Tracks:** Select one or more tracks to extend simultaneously. Gemini generates coherent material for all selected tracks.
+    *   **Complement Arrangement:** Generate an entire new arrangement (multiple tracks) to complement the existing piece. Includes instrument selection and drum track support.
+*   **Creative Control:**
+    *   **Style/Variation:** Provide textual hints (e.g., "more energetic", "syncopated rhythm") to guide Gemini's generation.
+    *   **Intelligent Transitions:** Supports suggested musical shifts (tempo, key, time signature changes) at transition points.
+*   **Robust Pipeline:** Uses the new `google-genai` SDK with structured JSON parsing for reliable results.
+*   **TUI Interface:** Interactive terminal interface for file selection, settings, and displaying analysis results.
+*   **Automated Testing:** Comprehensive test suite for MIDI parsing and AI response handling.
 
 ## Setup
 
@@ -73,40 +70,15 @@ To run linter:
 uv run ruff check .
 ```
 
-
-The script will then:
-1. Load the MIDI file.
-2. Perform detailed analysis using Gemini (or load from cache).
-3. **Show you the analysis results.**
-4. Guide you through the TUI to select the operation mode (Extend/Complement), output file, and mode-specific parameters.
-5. Generate the music with Gemini.
-6. Save the result to your specified output path.
-
-**Example (using TUI after providing input file):**
-
-```bash
-python imagine-music.py -i ./samples/sample_composition.mid
-```
-
-This will load `sample_composition.mid`, show analysis, and then prompt you via TUI for the mode, output path, and other settings.
-
 ## Future Enhancements (Post-MVP)
 
-*   Support for Type 0 MIDI files.
-*   Analysis and modification of multiple tracks. *(Partially addressed: Multi-track parsing done)*
-*   More sophisticated analysis (harmony, style). *(Partially addressed: Detailed analysis performed and displayed)*
-*   Different modification types (e.g., generating complementary parts like basslines or harmonies). *(Partially addressed: Basic complement mode implemented)*
-*   Improved prompt engineering for better musical coherence.
-*   Handling of more MIDI meta-messages (multiple time signatures, program changes). *(Partially addressed: First time signature, first program change)*
-*   Generating material for tracks other than the first, or adding new tracks. *(Partially addressed: Complement adds new track)*
-*   Using extracted instrument information in prompts or generation logic. *(Partially addressed: Instrument used in prompts)*
-*   **Advanced User Interaction:**
-    *   Display detailed analysis results. *(Implemented)*
-    *   Structured parameter input (dropdowns, fields for style, part type, variations).
 *   **Advanced Generation:**
-    *   Control over dynamics, rhythm.
-    *   Generate variations based on style.
-*   **Intelligent MIDI Output:**
-    *   Integrate generated tempo/key/time signature changes.
-*   **Robust Error Handling.** *(Partially addressed: API errors, blocked prompts, parsing issues)*
-*   **Evaluation Methods.**
+    *   Control over velocity layers and humanization.
+    *   Interactive iterative refinement (feedback loop with Gemini).
+*   **Integration:**
+    *   Support for `pretty_midi` for higher-level structural manipulation.
+    *   Direct export to DAW-friendly formats or XML.
+*   **Evaluation:**
+    *   Musical rule-based validation of generated output.
+*   **Audio-to-MIDI:** Further refine the `music-analyzer.py` tool for high-fidelity transcription.
+
