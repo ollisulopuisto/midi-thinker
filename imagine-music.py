@@ -3,12 +3,10 @@ import sys
 import json
 import os
 import argparse
-import google.generativeai as genai
-from google.generativeai.types import generation_types # For specific exception handling
-from google.api_core import exceptions as google_exceptions # For API errors
+from google import genai
 from dotenv import load_dotenv
 import re
-import hashlib # Added for caching
+import hashlib
 from tui import get_user_input, select_input_file, show_error, show_success, show_analysis_results
 
 # Default values if not found in MIDI
@@ -19,6 +17,8 @@ DEFAULT_TIME_SIGNATURE = {"numerator": 4, "denominator": 4} # Add default time s
 DEFAULT_INSTRUMENT = 0 # Acoustic Grand Piano
 ACOUSTIC_BASS = 32
 DEFAULT_COMPLEMENT_INSTRUMENT = ACOUSTIC_BASS
+
+MODEL_NAME = "gemini-2.0-flash" # Updated model name
 
 def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
     """
@@ -289,7 +289,6 @@ def save_analysis_to_cache(cache_filepath: str, analysis_data: dict):
     except Exception as e:
         print(f"Warning: Could not save to cache file {cache_filepath}: {e}", file=sys.stderr)
 
-
 def call_gemini_for_detailed_analysis(mvp_json_data: dict, input_midi_path: str):
     """
     (Post-MVP)
@@ -310,15 +309,9 @@ def call_gemini_for_detailed_analysis(mvp_json_data: dict, input_midi_path: str)
         return None
 
     try:
-        genai.configure(api_key=api_key)
-        # Use a model that supports JSON output mode if available and needed,
-        # but flash should handle structured JSON requests reasonably well.
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        client = genai.Client(api_key=api_key)
 
         # Calculate BPM for prompt context
-        # tempo_microseconds = mvp_json_data.get('tempo', DEFAULT_TEMPO)
-        # bpm = round(60_000_000 / tempo_microseconds) if tempo_microseconds > 0 else "N/A"
-        # key_signature = mvp_json_data.get('key_signature', DEFAULT_KEY)
         time_signature = mvp_json_data.get('time_signature', DEFAULT_TIME_SIGNATURE)
         ts_str = f"{time_signature.get('numerator', 4)}/{time_signature.get('denominator', 4)}"
 
@@ -334,11 +327,11 @@ Input Data:
 Based on the provided data (especially the notes across all tracks), provide a detailed analysis.
 
 **Output ONLY a valid JSON object** containing the following keys:
-- "key_signature": String (e.g., "Cmaj", "Amin") - Confirm or identify the most likely overall key signature.
-- "tempo_bpm": Integer - Confirm or identify the primary tempo in BPM.
-- "time_signature": String (e.g., "4/4", "3/4") - Confirm the primary time signature ({ts_str} was detected initially).
-- "style_genre": String - Briefly describe the likely musical style or genre (e.g., "Classical", "Jazz Ballad", "Electronic Dance").
-- "harmony_description": String - Briefly describe the basic harmonic structure (e.g., "Simple diatonic chords", "Modal harmony", "Uses extended jazz chords").
+- \"key_signature\": String (e.g., \"Cmaj\", \"Amin\") - Confirm or identify the most likely overall key signature.
+- \"tempo_bpm\": Integer - Confirm or identify the primary tempo in BPM.
+- \"time_signature\": String (e.g., \"4/4\", \"3/4\") - Confirm the primary time signature ({ts_str} was detected initially).
+- \"style_genre\": String - Briefly describe the likely musical style or genre (e.g., \"Classical\", \"Jazz Ballad\", \"Electronic Dance\").
+- \"harmony_description\": String - Briefly describe the basic harmonic structure (e.g., \"Simple diatonic chords\", \"Modal harmony\", \"Uses extended jazz chords\").
 
 Example JSON Output:
 ```json
@@ -358,37 +351,25 @@ Analysis JSON:
         print("--- End Detailed Analysis Prompt ---")
 
         print("\nCalling Gemini API for detailed analysis...")
-        # Use safety settings similar to basic analysis
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-        ]
-        # Consider adding generation_config={"response_mime_type": "application/json"} if using a model/API version that supports it explicitly.
-        response = model.generate_content(prompt, safety_settings=safety_settings)
+        
+        # New SDK Generation
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt
+        )
         print("Received detailed analysis response from Gemini.")
 
-        # Check for blocked response *before* accessing parts
-        if not response.parts:
-            block_reason = None
-            safety_feedback = None
-            if response.prompt_feedback:
-                 block_reason = response.prompt_feedback.block_reason
-                 safety_feedback = response.prompt_feedback.safety_ratings
-            error_msg = "Gemini detailed analysis response was empty or blocked."
-            if block_reason:
-                error_msg += f" Reason: {block_reason}."
-            if safety_feedback:
-                 error_msg += f" Safety Feedback: {safety_feedback}"
+        if not response.text:
+            error_msg = "Gemini detailed analysis response was empty."
             print(error_msg, file=sys.stderr)
-            show_error("Gemini Analysis Error", error_msg) # Show error in TUI
+            show_error("Gemini Analysis Error", error_msg)
             return None
 
         analysis_json_text = response.text
         print("\n--- Gemini Detailed Analysis Raw Response ---")
         print(analysis_json_text)
-        print("--- End Gemini Detailed Analysis Raw Response ---\n")
+        print("--- End Gemini Detailed Analysis Raw Response ---\
+")
 
         # Parse the JSON response
         parsed_analysis = parse_gemini_response(analysis_json_text) # Re-use existing JSON parser
@@ -405,22 +386,11 @@ Analysis JSON:
             show_error("Analysis Parsing Error", error_msg) # Show error in TUI
             return None
 
-    except generation_types.BlockedPromptException as e:
-        error_msg = f"Gemini detailed analysis prompt was blocked: {e}"
-        print(error_msg, file=sys.stderr)
-        show_error("Gemini Analysis Error", error_msg)
-        return None
-    except google_exceptions.GoogleAPIError as e:
-        error_msg = f"Gemini API error during detailed analysis: {e}"
-        print(error_msg, file=sys.stderr)
-        show_error("Gemini API Error", error_msg)
-        return None
     except Exception as e:
         error_msg = f"Unexpected error during detailed Gemini analysis: {e}"
         print(error_msg, file=sys.stderr)
         show_error("Analysis Error", error_msg)
         return None
-
 
 def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_index: int):
     """
@@ -434,8 +404,7 @@ def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_t
         return None
 
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        client = genai.Client(api_key=api_key)
 
         # --- Construct the Prompt ---
         # Calculate extension length in ticks using time signature
@@ -490,28 +459,14 @@ Generated Notes JSON (for Track {target_track_index}):
 
         # --- Call Gemini API ---
         print("\nCalling Gemini API...")
-        # Add safety settings similar to analysis
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-        ]
-        response = model.generate_content(prompt, safety_settings=safety_settings)
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt
+        )
         print("Received response from Gemini.")
 
-        # Check for blocked response *before* accessing parts
-        if not response.parts:
-            block_reason = None
-            safety_feedback = None
-            if response.prompt_feedback:
-                 block_reason = response.prompt_feedback.block_reason
-                 safety_feedback = response.prompt_feedback.safety_ratings
-            error_msg = "Gemini extension response was empty or blocked."
-            if block_reason:
-                error_msg += f" Reason: {block_reason}."
-            if safety_feedback:
-                 error_msg += f" Safety Feedback: {safety_feedback}"
+        if not response.text:
+            error_msg = "Gemini extension response was empty."
             print(error_msg, file=sys.stderr)
             show_error("Gemini Extension Error", error_msg) # Show error in TUI
             return None
@@ -519,25 +474,15 @@ Generated Notes JSON (for Track {target_track_index}):
         generated_json_text = response.text
         print("\n--- Gemini Response Text ---")
         print(generated_json_text)
-        print("--- End Gemini Response Text ---\n")
+        print("--- End Gemini Response Text ---\
+")
         return generated_json_text
 
-    except generation_types.BlockedPromptException as e:
-        error_msg = f"Gemini extension prompt was blocked: {e}"
-        print(error_msg, file=sys.stderr)
-        show_error("Gemini Extension Error", error_msg)
-        return None
-    except google_exceptions.GoogleAPIError as e:
-        error_msg = f"Gemini API error during extension: {e}"
-        print(error_msg, file=sys.stderr)
-        show_error("Gemini API Error", error_msg)
-        return None
     except Exception as e:
         error_msg = f"Unexpected error calling Gemini API for extension: {e}"
         print(error_msg, file=sys.stderr)
         show_error("Gemini Error", error_msg)
         return None
-
 
 def call_gemini_for_complement(mvp_json_data: dict, complement_type: str):
     """
@@ -551,8 +496,7 @@ def call_gemini_for_complement(mvp_json_data: dict, complement_type: str):
         return None
 
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash') # Or pro for potentially better musicality
+        client = genai.Client(api_key=api_key)
 
         # Basic context for the prompt
         key_signature = mvp_json_data.get('key_signature', DEFAULT_KEY)
@@ -605,28 +549,14 @@ Generated Notes JSON (for the new complementary track):
         print("--- End Complement Prompt ---")
 
         print("\nCalling Gemini API for complement generation...")
-        # Add safety settings similar to analysis
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-        ]
-        response = model.generate_content(prompt, safety_settings=safety_settings)
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt
+        )
         print("Received complement response from Gemini.")
 
-        # Check for blocked response *before* accessing parts
-        if not response.parts:
-            block_reason = None
-            safety_feedback = None
-            if response.prompt_feedback:
-                 block_reason = response.prompt_feedback.block_reason
-                 safety_feedback = response.prompt_feedback.safety_ratings
-            error_msg = "Gemini complement response was empty or blocked."
-            if block_reason:
-                error_msg += f" Reason: {block_reason}."
-            if safety_feedback:
-                 error_msg += f" Safety Feedback: {safety_feedback}"
+        if not response.text:
+            error_msg = "Gemini complement response was empty."
             print(error_msg, file=sys.stderr)
             show_error("Gemini Complement Error", error_msg) # Show error in TUI
             return None
@@ -634,25 +564,15 @@ Generated Notes JSON (for the new complementary track):
         generated_json_text = response.text
         print("\n--- Gemini Complement Response Text ---")
         print(generated_json_text)
-        print("--- End Gemini Complement Response Text ---\n")
+        print("--- End Gemini Complement Response Text ---\
+")
         return generated_json_text
 
-    except generation_types.BlockedPromptException as e:
-        error_msg = f"Gemini complement prompt was blocked: {e}"
-        print(error_msg, file=sys.stderr)
-        show_error("Gemini Complement Error", error_msg)
-        return None
-    except google_exceptions.GoogleAPIError as e:
-        error_msg = f"Gemini API error during complement generation: {e}"
-        print(error_msg, file=sys.stderr)
-        show_error("Gemini API Error", error_msg)
-        return None
     except Exception as e:
         error_msg = f"Unexpected error calling Gemini API for complement: {e}"
         print(error_msg, file=sys.stderr)
         show_error("Gemini Error", error_msg)
         return None
-
 
 def parse_gemini_response(json_text: str):
     """
@@ -700,7 +620,6 @@ def parse_gemini_response(json_text: str):
         print(f"Cleaned text was:\n---\n{cleaned_text}\n---", file=sys.stderr)
         show_error("JSON Parsing Error", f"An unexpected error occurred during parsing.\nDetails: {e}")
         return None
-
 
 def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: int):
     """
@@ -760,7 +679,6 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
 
     print(f"Converted {len(generated_notes)} notes into {len(midi_messages)} MIDI messages.")
     return midi_messages
-
 
 def main():
     load_dotenv() # Load .env file
