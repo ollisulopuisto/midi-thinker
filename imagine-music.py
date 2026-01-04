@@ -316,9 +316,9 @@ def call_gemini_for_detailed_analysis(mvp_json_data: dict, input_midi_path: str)
         model = genai.GenerativeModel('gemini-1.5-flash')
 
         # Calculate BPM for prompt context
-        tempo_microseconds = mvp_json_data.get('tempo', DEFAULT_TEMPO)
-        bpm = round(60_000_000 / tempo_microseconds) if tempo_microseconds > 0 else "N/A"
-        key_signature = mvp_json_data.get('key_signature', DEFAULT_KEY)
+        # tempo_microseconds = mvp_json_data.get('tempo', DEFAULT_TEMPO)
+        # bpm = round(60_000_000 / tempo_microseconds) if tempo_microseconds > 0 else "N/A"
+        # key_signature = mvp_json_data.get('key_signature', DEFAULT_KEY)
         time_signature = mvp_json_data.get('time_signature', DEFAULT_TIME_SIGNATURE)
         ts_str = f"{time_signature.get('numerator', 4)}/{time_signature.get('denominator', 4)}"
 
@@ -721,7 +721,8 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
             # Clamp values to valid MIDI ranges
             pitch = max(0, min(127, pitch))
             velocity = max(0, min(127, velocity))
-            if duration_tick < 0: duration_tick = 0 # Ensure non-negative duration
+            if duration_tick < 0:
+                duration_tick = 0 # Ensure non-negative duration
 
             if velocity == 0: # Treat velocity 0 as note_off
                  events.append({'type': 'note_off', 'tick': start_tick, 'pitch': pitch, 'velocity': 0})
@@ -932,6 +933,12 @@ def main():
 
     # --- Convert to MIDI Events ---
     start_offset = 0
+    # Note: start_offset is 0 because we assume Gemini returns ticks relative to the start of the *new segment* (for extend)
+    # or the start of the track (for complement).
+    # Since we are appending to mido tracks (delta times), a delta of 0 for the first new event means "continues immediately".
+
+    new_midi_events = generated_notes_to_midi_events(generated_notes, start_offset)
+
     if mode == 'extend':
         target_track_index = settings['target_track_index']
         # For Type 0, target_track_index will always be 0 from TUI logic
@@ -952,14 +959,6 @@ def main():
                  target_track.pop()
 
             target_track.extend(new_midi_events)
-
-            # Add a new end_of_track message
-            # Calculate the time for the final end_of_track based on the last event added
-            last_event_absolute_tick = start_offset + (generated_notes[-1]['start_tick'] + generated_notes[-1]['duration_tick'] if generated_notes else 0)
-            # Find the actual end tick of the track *after* adding events
-            current_track_end_tick = 0
-            for msg in target_track:
-                current_track_end_tick += msg.time
 
             # Add end_of_track with 0 delta time right after the last message
             target_track.append(mido.MetaMessage('end_of_track', time=0))
@@ -994,18 +993,7 @@ def main():
         new_track.extend(new_midi_events)
 
         # Add end_of_track message to the new track
-        # Calculate end tick based on the added events
-        if new_midi_events:
-             # Find the time of the last message added
-             last_msg_tick = 0
-             temp_tick = 0
-             for msg in new_midi_events:
-                 temp_tick += msg.time
-                 last_msg_tick = temp_tick
-             # Add end_of_track with delta 0 right after the last message
-             new_track.append(mido.MetaMessage('end_of_track', time=0))
-        else:
-             new_track.append(mido.MetaMessage('end_of_track', time=0)) # Add immediately if no notes
+        new_track.append(mido.MetaMessage('end_of_track', time=0))
 
         print("Events added to new track.")
 

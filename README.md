@@ -29,15 +29,21 @@ This project aims to create a tool that leverages the Google Gemini API to help 
     git clone <repository_url>
     cd midi-thinker
     ```
-2.  **Create a virtual environment (recommended):**
+
+2.  **Install `uv` (if not already installed):**
     ```bash
-    python -m venv venv
-    source venv/bin/activate # On Windows use `venv\Scripts\activate`
+    # On macOS/Linux
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    # On Windows
+    powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
     ```
-3.  **Install dependencies:**
+
+3.  **Install dependencies and run:**
+    `uv` manages the virtual environment automatically.
     ```bash
-    pip install mido python-dotenv google-generativeai prompt_toolkit
+    uv sync
     ```
+
 4.  **Set up API Key:**
     *   Copy the `.env.template` file to `.env`.
     *   Open `.env` and replace `"YOUR_API_KEY_HERE"` with your actual Google Gemini API key.
@@ -45,15 +51,28 @@ This project aims to create a tool that leverages the Google Gemini API to help 
 
 ## Usage
 
-Execute the script from the command line. You can optionally provide the input file path:
+Execute the script using `uv run`:
 
 ```bash
 # Launch TUI to select input file and settings
-python imagine-music.py
+uv run imagine-music.py
 
 # Provide input file via CLI, then use TUI for other settings
-python imagine-music.py -i ./path/to/your/input.mid
+uv run imagine-music.py -i ./path/to/your/input.mid
 ```
+
+### Development
+
+To run tests:
+```bash
+uv run python -m pytest
+```
+
+To run linter:
+```bash
+uv run ruff check .
+```
+
 
 The script will then:
 1. Load the MIDI file.

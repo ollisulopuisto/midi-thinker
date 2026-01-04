@@ -1,5 +1,4 @@
 import google.generativeai as genai
-import mido
 import os
 import re
 import time
@@ -12,6 +11,7 @@ import json # Added for caching
 import hashlib # Added for caching
 import threading # Added for spinner
 import itertools # Added for spinner
+import midi_generator # Import the new module
 
 # --- Konfiguraatio ---
 load_dotenv()
@@ -26,14 +26,9 @@ genai.configure(api_key=API_KEY)
 # Käytetään pyydettyä kokeellista mallia
 MODEL_NAME = "gemini-2.5-pro-exp-03-25" # <--- PÄIVITETTY TÄHÄN
 
-# MIDI-asetukset
-TICKS_PER_BEAT = 480  # Standardi resoluutio
-DEFAULT_BPM = 120     # Oletustempo, jos Gemini ei anna sitä
-DRUM_CHANNEL = 9      # MIDI-kanava 10 (0-indeksoitu) rummuille
-MELODY_CHANNEL = 0    # MIDI-kanava 1
-HARMONY_CHANNEL_1 = 1 # MIDI-kanava 2
-HARMONY_CHANNEL_2 = 2 # MIDI-kanava 3
-CHORD_CHANNEL = 3     # MIDI-kanava 4 (käytetään tekstiviesteille)
+# MIDI-asetukset (Keep only those NOT moved to midi_generator)
+DEFAULT_BPM = 120     # Oletustempo, jos Gemini ei anna sitä (still needed for parsing)
+# TICKS_PER_BEAT, DRUM_CHANNEL etc. are now in midi_generator
 
 # Cache directory
 CACHE_DIR = ".music-analyzer-cache"
@@ -127,7 +122,7 @@ def upload_audio_file(file_path, max_retries=3, initial_delay=2):
     print(f"Ladataan tiedostoa: {file_path}...")
     retries = 0
     delay = initial_delay
-    last_exception = None
+    # last_exception = None
     spinner = Spinner(f"Uploading {os.path.basename(file_path)}...") # Spinner for upload
 
     try:
@@ -135,7 +130,7 @@ def upload_audio_file(file_path, max_retries=3, initial_delay=2):
         while retries <= max_retries:
             try:
                 # Tarkista tiedoston koko ennen latausta (API:lla voi olla rajoituksia)
-                file_size = os.path.getsize(file_path)
+                # file_size = os.path.getsize(file_path)
                 # Print size before spinner starts messing with the line too much
                 # print(f"Tiedoston koko: {file_size / (1024*1024):.2f} MB") # Moved print
 
@@ -166,7 +161,7 @@ def upload_audio_file(file_path, max_retries=3, initial_delay=2):
                      return audio_file # Voi olla riskialtista, mutta annetaan mahdollisuus
 
             except HttpError as e:
-                last_exception = e
+                # last_exception = e
                 # Tarkista virhekoodi, yritä uudelleen vain tietyissä tapauksissa (5xx virheet)
                 if e.resp.status >= 500 and retries < max_retries:
                     spinner.stop() # Stop spinner before printing error and waiting
@@ -178,7 +173,7 @@ def upload_audio_file(file_path, max_retries=3, initial_delay=2):
                 else:
                     raise # Re-raise the exception if not retrying or permanent error
             except google_exceptions.GoogleAPIError as e: # Laajempi Google API -virheiden käsittely
-                last_exception = e
+                # last_exception = e
                 # Voit tarkentaa tätä, jos tiedät mitkä GoogleAPIError-virheet ovat väliaikaisia
                 if retries < max_retries: # Yritä uudelleen yleisille API-virheille varovasti
                     spinner.stop() # Stop spinner before printing error and waiting
@@ -189,9 +184,9 @@ def upload_audio_file(file_path, max_retries=3, initial_delay=2):
                     spinner.start() # Restart spinner for next attempt
                 else:
                     raise # Re-raise the exception if not retrying or permanent error
-            except Exception as e:
+            except Exception:
                 # Muut odottamattomat virheet
-                last_exception = e
+                # last_exception = e
                 raise # Re-raise immediately for unexpected errors
 
     except Exception as e: # Catch exceptions raised within the loop or initial setup
@@ -284,11 +279,26 @@ def parse_gemini_response(text):
             continue
 
         # Tunnista osioiden otsikot (tehdään vähemmän herkäksi pienille muutoksille)
-        if re.match(r'^\d?\s*\.?\s*\*\*Tempo', line, re.IGNORECASE): current_section = "tempo"; print("--- Jäsennetään Tempoa ---"); continue
-        if re.match(r'^\d?\s*\.?\s*\*\*Sävellaji', line, re.IGNORECASE): current_section = "key"; print("--- Jäsennetään Sävellajia ---"); continue
-        if re.match(r'^\d?\s*\.?\s*\*\*Sointukierto', line, re.IGNORECASE): current_section = "chords"; print("--- Jäsennetään Sointuja ---"); continue
-        if re.match(r'^\d?\s*\.?\s*\*\*Rummut', line, re.IGNORECASE): current_section = "drums"; print("--- Jäsennetään Rumpuja ---"); continue
-        if re.match(r'^\d?\s*\.?\s*\*\*Lead-Melodia', line, re.IGNORECASE): current_section = "melody"; print("--- Jäsennetään Melodiaa ---"); continue
+        if re.match(r'^\d?\s*\.?\s*\*\*Tempo', line, re.IGNORECASE):
+            current_section = "tempo"
+            print("--- Jäsennetään Tempoa ---")
+            continue
+        if re.match(r'^\d?\s*\.?\s*\*\*Sävellaji', line, re.IGNORECASE):
+            current_section = "key"
+            print("--- Jäsennetään Sävellajia ---")
+            continue
+        if re.match(r'^\d?\s*\.?\s*\*\*Sointukierto', line, re.IGNORECASE):
+            current_section = "chords"
+            print("--- Jäsennetään Sointuja ---")
+            continue
+        if re.match(r'^\d?\s*\.?\s*\*\*Rummut', line, re.IGNORECASE):
+            current_section = "drums"
+            print("--- Jäsennetään Rumpuja ---")
+            continue
+        if re.match(r'^\d?\s*\.?\s*\*\*Lead-Melodia', line, re.IGNORECASE):
+            current_section = "melody"
+            print("--- Jäsennetään Melodiaa ---")
+            continue
         # Käytä searchia harmonian otsikon tunnistamiseen, jotta '*   **Harmonia...*' toimii
         if re.search(r'\*\*.*?Harmonia', line, re.IGNORECASE):
              current_section = "harmonies"
@@ -424,299 +434,6 @@ def parse_gemini_response(text):
     print(f"  Harmonianuotteja: {len(data.get('harmonies', []))}")
 
     return data
-
-# --- MIDI-muunnosfunktiot ---
-
-def note_name_to_midi(note_name):
-    """Muuntaa nuotin nimen (esim. C4, F#5) MIDI-numeroksi."""
-    notes = {'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3, 'E': 4, 'F': 5,
-             'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8, 'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11}
-    match = re.match(r'([A-Ga-g][#b]?)(\d+)', note_name)
-    if not match:
-        print(f"Varoitus: Virheellinen nuotin nimi '{note_name}', käytetään C4 (60)")
-        return 60 # Oletusarvo virhetilanteessa
-    
-    name_part = match.group(1)
-    octave = int(match.group(2))
-    
-    # Normalisoi nimi (esim. c#, db -> C#, Db)
-    name = name_part[0].upper()
-    if len(name_part) > 1:
-        name += name_part[1].lower() # Esim. # tai b
-
-    # Muunna flatit sharpeiksi tai päinvastoin tarvittaessa MIDIa varten
-    # Tässä esimerkissä oletetaan standardimappaus, jossa C#=Db jne.
-    if name not in notes:
-         # Kokeile vaihtaa enharmonisesti
-         enharmonic_map = {'Db': 'C#', 'Eb': 'D#', 'Gb': 'F#', 'Ab': 'G#', 'Bb': 'A#'}
-         sharp_map = {v: k for k, v in enharmonic_map.items()} # Käänteinen mappaus
-         
-         if name in enharmonic_map:
-              original_name = name
-              name = enharmonic_map[name]
-              # print(f"Huom: Muunnettiin enharmonisesti {original_name} -> {name}")
-         elif name in sharp_map:
-              original_name = name
-              name = sharp_map[name]
-              # print(f"Huom: Muunnettiin enharmonisesti {original_name} -> {name}")
-         else:
-              print(f"Varoitus: Tuntematon nuotin perusnimi '{name_part}' nuotissa '{note_name}', käytetään C4 (60)")
-              return 60
-
-    midi_note = notes[name] + (octave + 1) * 12 # MIDI C4 = 60
-    # Varmistetaan että nuotti on MIDI-alueella (0-127)
-    return max(0, min(127, midi_note))
-
-
-def drum_name_to_midi(instrument_name):
-    """Muuntaa yleisimmät rumpuinstrumenttien nimet General MIDI -numeroiksi (kanava 10)."""
-    name = instrument_name.lower().strip()
-    # Yritetään olla tarkempia
-    if "bass drum" in name or "kick" in name or "bassorumpu" in name: return 36 # Acoustic Bass Drum (usein myös 35 GM2:ssa)
-    if "acoustic snare" in name or (("virveli" in name or "snare" in name) and not "electric" in name): return 38
-    if "electric snare" in name: return 40
-    if "snare" in name or "virveli" in name: return 38 # Oletus snarelle
-    if "low floor tom" in name or "floor tom 1" in name: return 41
-    if "closed hi-hat" in name or "closed hh" in name or "hi-hat (suljettu)" in name: return 42
-    if "high floor tom" in name or "floor tom 2" in name: return 43
-    if "pedal hi-hat" in name: return 44
-    if "low tom" in name or "tom 3" in name: return 45
-    if "open hi-hat" in name or "open hh" in name or "hi-hat (avoin)" in name: return 46
-    if "low-mid tom" in name or "tom 2" in name: return 47
-    if "hi-mid tom" in name or "tom 1" in name: return 48
-    if "crash cymbal 1" in name or "crash 1" in name or "crash" in name: return 49 # Oletus crashille
-    if "high tom" in name or "tom 0" in name : return 50
-    if "ride cymbal 1" in name or "ride 1" in name or "ride" in name: return 51 # Oletus ridelle
-    if "chinese cymbal" in name: return 52
-    if "ride bell" in name: return 53
-    if "tambourine" in name: return 54
-    if "splash cymbal" in name: return 55
-    if "cowbell" in name: return 56
-    if "crash cymbal 2" in name or "crash 2" in name: return 57
-    if "vibraslap" in name: return 58
-    if "ride cymbal 2" in name or "ride 2" in name: return 59
-    if "hi bongo" in name: return 60
-    if "low bongo" in name: return 61
-    if "mute hi conga" in name: return 62
-    if "open hi conga" in name: return 63
-    if "low conga" in name: return 64
-    if "high timbale" in name: return 65
-    if "low timbale" in name: return 66
-    if "hand clap" in name or "clap" in name: return 39
-    if "rim shot" in name or "rim" in name: return 37
-
-    # Yleisemmät termit
-    if "tom" in name: return 45 # Oletus tomille (Low Tom)
-    if "hi-hat" in name or "hh" in name: return 42 # Oletus hi-hatille (Closed)
-    if "cymbal" in name: return 49 # Oletus symbaalille (Crash 1)
-
-    # Oletus tuntemattomille äänille
-    print(f"Varoitus: Tuntematon rumpuääni '{instrument_name}'. Käytetään Acoustic Snare (38).")
-    return 38
-
-def seconds_to_ticks(seconds, bpm, ticks_per_beat):
-    """Muuntaa ajan sekunneista MIDI-tickeiksi."""
-    if bpm <= 0:
-        print("Varoitus: BPM on nolla tai negatiivinen. Käytetään oletusta 120.")
-        bpm = 120
-    beats = (float(seconds) * float(bpm)) / 60.0
-    ticks = int(round(beats * float(ticks_per_beat))) # Pyöristetään lähimpään kokonaiseen tickiin
-    return ticks
-
-def midi_key_name(key_string):
-    """ Muuntaa 'C Major', 'A Minor' tyyppisen merkkijonon mido-kirjaston vaatimaan muotoon ('C', 'Am'). """
-    parts = key_string.split()
-    if not parts:
-        return 'C' # Oletus
-
-    key = parts[0].capitalize()
-    # Varmista, että on sharps/flats mukana
-    if len(key) > 1 and key[1] in ['#', 'b']:
-        pass # OK
-    elif len(key) > 1: # Esim Csharp -> C#
-         if key[1:].lower() == 'sharp': key = key[0] + '#'
-         elif key[1:].lower() == 'flat': key = key[0] + 'b'
-         else: key = key[0] # Ota vain ensimmäinen kirjain, jos ei #/b
-
-
-    mode = 'major' # Oletus
-    if len(parts) > 1 and parts[1].lower() in ['minor', 'molli', 'm']:
-        mode = 'minor'
-
-    if mode == 'minor':
-        return key + 'm'
-    else:
-        return key
-
-
-def create_midi_file(data, output_filename="output.mid"):
-    """Luo MIDI-tiedoston jäsennetystä datasta."""
-    print(f"Luodaan MIDI-tiedostoa: {output_filename}")
-    mid = mido.MidiFile(type=1, ticks_per_beat=TICKS_PER_BEAT) # type=1 for multi-track
-
-    current_bpm = data.get('tempo', DEFAULT_BPM)
-    if current_bpm <= 0:
-        print(f"Varoitus: Annettu BPM ({current_bpm}) on virheellinen. Käytetään oletusta {DEFAULT_BPM}.")
-        current_bpm = DEFAULT_BPM
-
-    # --- Track 0: Meta-viestit (Tempo, Sävellaji, Sointunimet) ---
-    meta_track = mido.MidiTrack()
-    mid.tracks.append(meta_track)
-    meta_track.append(mido.MetaMessage('track_name', name='Meta Info', time=0))
-    # Aseta tempo
-    tempo_usec = mido.bpm2tempo(current_bpm)
-    meta_track.append(mido.MetaMessage('set_tempo', tempo=tempo_usec, time=0))
-    # Aseta sävellaji
-    key_input = data.get('key', 'C Major')
-    mido_key = midi_key_name(key_input)
-    meta_track.append(mido.MetaMessage('key_signature', key=mido_key, time=0))
-    print(f"Asetetaan MIDI-sävellaji: {mido_key} (alkuperäinen: '{key_input}')")
-
-    # Lisää sointujen nimet tekstiviesteinä tai merkkeriviesteinä
-    last_meta_tick = 0
-    for chord in data.get("chords", []):
-        chord_tick = seconds_to_ticks(chord['time'], current_bpm, TICKS_PER_BEAT)
-        delta_time = max(0, chord_tick - last_meta_tick) # Delta-aika ei voi olla negatiivinen
-        # Käytä 'marker' tyyppiä, jotkut DAW:t näyttävät ne paremmin
-        meta_track.append(mido.MetaMessage('marker', text=chord['name'], time=delta_time))
-        last_meta_tick = chord_tick
-
-    # --- Track 1: Rummut ---
-    drum_track = mido.MidiTrack()
-    mid.tracks.append(drum_track)
-    drum_track.append(mido.MetaMessage('track_name', name='Drums', time=0))
-    # Kanava 10 on oletus rummuille MIDI-standardissa
-    drum_track.append(mido.Message('control_change', control=0, value=0, time=0, channel=DRUM_CHANNEL)) # Bank Select MSB (varmuuden vuoksi)
-    drum_track.append(mido.Message('control_change', control=32, value=0, time=0, channel=DRUM_CHANNEL))# Bank Select LSB
-    drum_track.append(mido.Message('program_change', program=0, time=0, channel=DRUM_CHANNEL)) # Standard Drum Kit
-
-    drum_events = []
-    for hit in data.get("drums", []):
-        tick = seconds_to_ticks(hit['time'], current_bpm, TICKS_PER_BEAT)
-        note = drum_name_to_midi(hit['instrument'])
-        # Lisätään lyhyt Note On ja heti perään Note Off
-        drum_events.append({'tick': tick, 'type': 'note_on', 'note': note, 'velocity': 100, 'channel': DRUM_CHANNEL})
-        # Lyhyt kesto rumpuäänille (esim. 60 tickiä = ~1/32 nuotti @ 480 TPB)
-        duration_ticks = 60 #max(1, int(TICKS_PER_BEAT / 8)) # Vähintään 1 tick
-        drum_events.append({'tick': tick + duration_ticks, 'type': 'note_off', 'note': note, 'velocity': 0, 'channel': DRUM_CHANNEL})
-
-    # Lajitellaan rumpu-eventit ja lasketaan delta-ajat
-    drum_events.sort(key=lambda x: x['tick'])
-    last_drum_tick = 0
-    for event in drum_events:
-        delta_time = max(0, event['tick'] - last_drum_tick)
-        drum_track.append(mido.Message(event['type'], note=event['note'], velocity=event['velocity'], time=delta_time, channel=event['channel']))
-        last_drum_tick = event['tick']
-
-    # --- Track 2: Melodia ---
-    melody_track = mido.MidiTrack()
-    mid.tracks.append(melody_track)
-    melody_track.append(mido.MetaMessage('track_name', name='Lead Melody', time=0))
-    melody_track.append(mido.Message('program_change', program=0, time=0, channel=MELODY_CHANNEL)) # Esim. 0: Acoustic Grand Piano
-
-    note_events_melody = []
-    for note_info in data.get("melody", []):
-        start_tick = seconds_to_ticks(note_info['time'], current_bpm, TICKS_PER_BEAT)
-        duration_ticks = seconds_to_ticks(note_info['duration'], current_bpm, TICKS_PER_BEAT)
-        # Varmistetaan minimikesto
-        duration_ticks = max(1, duration_ticks)
-        end_tick = start_tick + duration_ticks
-        midi_note = note_name_to_midi(note_info['note'])
-
-        note_events_melody.append({'tick': start_tick, 'type': 'note_on', 'note': midi_note, 'velocity': 90, 'channel': MELODY_CHANNEL})
-        note_events_melody.append({'tick': end_tick, 'type': 'note_off', 'note': midi_note, 'velocity': 0, 'channel': MELODY_CHANNEL})
-
-    # Lajitellaan nuotti-eventit ja lasketaan delta-ajat
-    note_events_melody.sort(key=lambda x: x['tick'])
-    last_melody_tick = 0
-    for event in note_events_melody:
-        delta_time = max(0, event['tick'] - last_melody_tick)
-        melody_track.append(mido.Message(event['type'], note=event['note'], velocity=event['velocity'], time=delta_time, channel=event['channel']))
-        last_melody_tick = event['tick']
-
-
-    # --- Seuraavat raidat: Harmoniat (ryhmiteltynä tai kaikki yhdellä raidalla) ---
-    harmony_groups = {}
-    for note_info in data.get("harmonies", []):
-        group_name = note_info.get("group", "Default Harmony")
-        if group_name not in harmony_groups:
-            harmony_groups[group_name] = []
-        harmony_groups[group_name].append(note_info)
-
-    harmony_channel_map = { # Määritellään kanavat eri harmoniaryhmille
-        "Default Harmony": HARMONY_CHANNEL_1,
-        # Voit lisätä tähän lisää mappauksia, jos Gemini tunnistaa esim. "(Jouset)"
-        "Harmonia 1 (Jouset)": HARMONY_CHANNEL_1,
-        "Harmonia 2 (Padi)": HARMONY_CHANNEL_2,
-    }
-    used_channels = {MELODY_CHANNEL, DRUM_CHANNEL} # Pidä kirjaa käytetyistä kanavista
-    next_harmony_channel = HARMONY_CHANNEL_1
-
-    for group_name, notes in harmony_groups.items():
-        # Valitse kanava tälle harmoniaryhmälle
-        current_harmony_channel = harmony_channel_map.get(group_name)
-        if current_harmony_channel is None or current_harmony_channel in used_channels:
-             # Etsi seuraava vapaa kanava (vältä rumpukanavaa 9)
-             while next_harmony_channel in used_channels or next_harmony_channel == DRUM_CHANNEL:
-                 next_harmony_channel += 1
-                 if next_harmony_channel > 15: # Loppuivatko kanavat?
-                      print("Varoitus: MIDI-kanavat loppuivat, käytetään kanavaa 1 uudelleen.")
-                      next_harmony_channel = 1 # Käytä kanavaa 1 uudelleen (ei ihanteellista)
-                      break
-             current_harmony_channel = next_harmony_channel
-             harmony_channel_map[group_name] = current_harmony_channel # Tallenna mappaus
-             used_channels.add(current_harmony_channel)
-             next_harmony_channel += 1
-
-        print(f"Luodaan harmoniaraita '{group_name}' kanavalle {current_harmony_channel + 1}")
-        harmony_track = mido.MidiTrack()
-        mid.tracks.append(harmony_track)
-        harmony_track.append(mido.MetaMessage('track_name', name=f'Harmony: {group_name}', time=0))
-        # Valitse instrumentti (esim. Jouset 48, Padi 89, kuoro 52) - voit tehdä tästä älykkäämmän
-        program = 48 # Oletus: Strings
-        if "pad" in group_name.lower(): program = 89 # Warm Pad
-        elif "choir" in group_name.lower() or "aah" in group_name.lower(): program = 52 # Choir Aahs
-        harmony_track.append(mido.Message('program_change', program=program, time=0, channel=current_harmony_channel))
-
-        harmony_events = []
-        for note_info in notes:
-            start_tick = seconds_to_ticks(note_info['time'], current_bpm, TICKS_PER_BEAT)
-            duration_ticks = seconds_to_ticks(note_info['duration'], current_bpm, TICKS_PER_BEAT)
-            duration_ticks = max(1, duration_ticks)
-            end_tick = start_tick + duration_ticks
-            midi_note = note_name_to_midi(note_info['note'])
-
-            harmony_events.append({'tick': start_tick, 'type': 'note_on', 'note': midi_note, 'velocity': 70, 'channel': current_harmony_channel})
-            harmony_events.append({'tick': end_tick, 'type': 'note_off', 'note': midi_note, 'velocity': 0, 'channel': current_harmony_channel})
-
-        # Lajitellaan tämän harmoniatrackin eventit ja lasketaan delta-ajat
-        harmony_events.sort(key=lambda x: x['tick'])
-        last_harmony_tick = 0
-        for event in harmony_events:
-            delta_time = max(0, event['tick'] - last_harmony_tick)
-            harmony_track.append(mido.Message(event['type'], note=event['note'], velocity=event['velocity'], time=delta_time, channel=event['channel']))
-            last_harmony_tick = event['tick']
-
-    # Lisää End of Track -viestit jokaiseen raitaan oikealla delta-ajalla
-    for i, track in enumerate(mid.tracks):
-        last_tick_on_track = sum(msg.time for msg in track)
-        # Varmista, että end_of_track tulee *viimeisen* viestin jälkeen kaikilla raidoilla
-        # Etsi absoluuttinen maksimiaika kaikilta raidoilta
-        max_tick = 0
-        for t in mid.tracks:
-             max_tick = max(max_tick, sum(msg.time for msg in t))
-
-        # Laske delta aika tämän raidan viimeisestä viestistä kokonaiskestoon
-        delta_to_end = max(0, max_tick - last_tick_on_track)
-        track.append(mido.MetaMessage('end_of_track', time=delta_to_end))
-
-    # Tallenna MIDI-tiedosto
-    try:
-        mid.save(output_filename)
-        print(f"MIDI-tiedosto tallennettu onnistuneesti: {output_filename}")
-    except Exception as e:
-        print(f"Virhe tallennettaessa MIDI-tiedostoa: {e}")
-
 
 # --- Pääohjelma ---
 if __name__ == "__main__":
@@ -855,7 +572,14 @@ if __name__ == "__main__":
     # 4. Luo MIDI-tiedosto (tämä suoritetaan aina, joko cachesta tai API-kutsun jälkeen)
     if parsed_data: # Proceed only if we have data (from cache or API)
         output_midi_filename = os.path.splitext(os.path.basename(audio_file_path))[0] + ".mid"
-        create_midi_file(parsed_data, output_midi_filename)
+        try:
+            # Use the function from the imported module
+            midi_generator.create_midi_file(parsed_data, output_midi_filename)
+            # Success message is now printed within create_midi_file if successful
+        except Exception:
+            # Error message is printed within create_midi_file
+            print(f"MIDI-tiedoston luonti epäonnistui tiedostoon {output_midi_filename}.", file=sys.stderr)
+            # Optionally exit or handle the failure further here
     else:
         print("Analyysidataa ei saatavilla (ei cachesta eikä API:sta). MIDI-tiedostoa ei luoda.")
 

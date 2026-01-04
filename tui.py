@@ -1,9 +1,7 @@
 import os
-from prompt_toolkit import prompt
 from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, message_dialog
 from prompt_toolkit.validation import Validator, ValidationError
 from prompt_toolkit.completion import PathCompleter
-import json # Import json for formatting example
 
 class NumberValidator(Validator):
     """Validates that input is a positive integer."""
@@ -71,7 +69,8 @@ def get_user_input(input_path: str, num_tracks: int):
         completer=path_completer,
         validator=NotEmptyValidator()
     ).run()
-    if settings['output_path'] is None: return None # User cancelled
+    if settings['output_path'] is None:
+        return None # User cancelled
 
     # 2. Get Mode
     mode = radiolist_dialog(
@@ -82,7 +81,8 @@ def get_user_input(input_path: str, num_tracks: int):
             ('complement', 'Add Complementary Track')
         ]
     ).run()
-    if mode is None: return None # User cancelled
+    if mode is None:
+        return None # User cancelled
     settings['mode'] = mode
 
     # 3. Get Mode-Specific Parameters
@@ -96,7 +96,8 @@ def get_user_input(input_path: str, num_tracks: int):
                 text=f'Which track do you want to extend? (0-{num_tracks-1})',
                 values=track_values
             ).run()
-            if selected_track_str is None: return None # User cancelled
+            if selected_track_str is None:
+                return None # User cancelled
             target_track_index = int(selected_track_str)
         else:
             print("Only one track found. Extending Track 0.")
@@ -111,7 +112,8 @@ def get_user_input(input_path: str, num_tracks: int):
             default='4',
             validator=NumberValidator()
         ).run()
-        if bars is None: return None # User cancelled
+        if bars is None:
+            return None # User cancelled
         settings['bars_to_extend'] = int(bars)
 
     elif mode == 'complement':
@@ -121,7 +123,8 @@ def get_user_input(input_path: str, num_tracks: int):
             default='bassline',
             validator=NotEmptyValidator()
         ).run()
-        if comp_type is None: return None # User cancelled
+        if comp_type is None:
+            return None # User cancelled
         settings['complement_type'] = comp_type
 
     return settings
