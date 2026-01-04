@@ -40,14 +40,15 @@ def select_input_file():
     return input_path
 
 
-def get_user_input(input_path: str, num_tracks: int):
+def get_user_input(input_path: str, num_tracks: int, midi_type: int = 1):
     """
     Guides the user through prompts for output path, mode, and parameters,
-    using the provided input_path and number of tracks.
+    using the provided input_path, number of tracks, and MIDI type.
 
     Args:
         input_path (str): The path to the input MIDI file.
         num_tracks (int): The number of tracks in the input MIDI file.
+        midi_type (int): The MIDI file type (0 or 1). Defaults to 1.
 
     Returns:
         dict: A dictionary containing the user's selections (excluding input_path),

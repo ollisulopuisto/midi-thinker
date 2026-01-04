@@ -207,233 +207,80 @@ def upload_audio_file(file_path, max_retries=3, initial_delay=2):
 
 def build_prompt(audio_file_uri):
     """Rakentaa promptin Gemini API:lle käyttäen tiedoston URI:a."""
-    # Promptia voi hienosäätää kokeellisen mallin käyttäytymisen mukaan
     return f"""
 Analysoi seuraava äänitiedosto URI:lla {audio_file_uri}
 
-Pura siitä seuraavat musiikilliset tiedot mahdollisimman tarkasti ja jäsennellysti MIDI-muunnosta varten. Käytä selkeitä otsikoita ja alla määriteltyä muotoilua tarkasti. Ilmoita ajoitukset sekunteina (float) kappaleen alusta.
+Pura siitä seuraavat musiikilliset tiedot mahdollisimman tarkasti MIDI-muunnosta varten.
+Ilmoita ajoitukset sekunteina (float) kappaleen alusta.
 
-1.  **Tempo (BPM):**
-    *   Arvioitu keskimääräinen tempo (Beats Per Minute). Esimerkki: `125.5`
+Tulosta vastauksesi **vain** validina JSON-objektina, joka sisältää seuraavat kentät:
 
-2.  **Sävellaji:**
-    *   Todennäköisin sävellaji. Käytä muotoa 'Avain Modi' (esim. `C Major`, `A Minor`).
+1.  `tempo`: (float) Arvioitu keskimääräinen tempo (BPM).
+2.  `key`: (string) Todennäköisin sävellaji (esim. "C Major").
+3.  `chords`: (list of objects) Lista soinnuista. Jokaisessa objektissa:
+    *   `time`: (float) Alkamisaika sekunteina.
+    *   `name`: (string) Soinnun nimi.
+4.  `drums`: (list of objects) Lista rumpuäänistä. Jokaisessa objektissa:
+    *   `time`: (float) Iskuaika sekunteina.
+    *   `instrument`: (string) Instrumentin nimi (esim. "Bassorumpu", "Snare").
+5.  `melody`: (list of objects) Lista melodianuoteista (Kanava 1). Jokaisessa objektissa:
+    *   `time`: (float) Alkamisaika sekunteina.
+    *   `note`: (string) Nuotin nimi oktaavilla (esim. "C4").
+    *   `duration`: (float) Kesto sekunteina.
+6.  `harmonies`: (list of objects) Lista harmoniakerroksien nuoteista (Kanavat 2+). Jokaisessa objektissa:
+    *   `time`: (float) Alkamisaika sekunteina.
+    *   `note`: (string) Nuotin nimi oktaavilla.
+    *   `duration`: (float) Kesto sekunteina.
+    *   `group`: (string, valinnainen) Harmoniaryhmän nimi (esim. "Jouset", "Padi"). Jos ei tunnistettavissa, käytä "Default Harmony".
 
-3.  **Sointukierto:**
-    *   Tärkeimmät soinnut ja niiden arvioidut alkamisajat sekunteina. Käytä TÄSMÄLLEEN tätä muotoa per rivi: `[aika_sekunteina] - [soinnun_nimi]`
-    *   Esimerkki:
-        `0.0 - Cmaj7`
-        `4.1 - G7`
-        `8.0 - Am`
-
-4.  **Rummut ja Perkussiot (Kanava 10):**
-    *   Listaa tärkeimpien rumpuäänten (Bassorumpu, Virveli, Hi-Hat (suljettu), Hi-Hat (avoin), Crash, Ride, Tom1, Tom2, etc.) iskuajat sekunteina. Käytä TÄSMÄLLEEN tätä muotoa per rivi: `[aika_sekunteina] - [instrumentti]`
-    *   Esimerkki:
-        `0.0 - Bassorumpu`
-        `0.5 - Hi-Hat (suljettu)`
-        `1.0 - Virveli`
-        `1.0 - Bassorumpu`
-        `1.5 - Hi-Hat (suljettu)`
-
-5.  **Lead-Melodia (Kanava 1):**
-    *   Tunnista päämelodiaa soittava instrumentti (jos mahdollista). Mainitse se otsikon alla ennen nuottilista.
-    *   Listaa melodian nuotit: alkamisaika sekunteina, nuotin nimi oktaavilla (esim. C4, F#5, Bb3), kesto sekunteina. Käytä TÄSMÄLLEEN tätä muotoa per rivi: `[aika_sekunteina] - [nuotti] - [kesto_sekunteina]`
-    *   Esimerkki:
-        `Instrumentti: Piano`
-        `2.1 - G4 - 0.4`
-        `2.5 - A4 - 0.4`
-        `3.0 - C5 - 0.9`
-
-6.  **Tärkeimmät Harmoniate (Kanavat 2+):**
-    *   Tunnista tärkeimmät harmoniaäänet tai -kerrokset (jos erotettavissa). Mainitse instrumentti jos mahdollista.
-    *   Listaa harmonian nuotit samaan tapaan kuin Lead-Melodia. Käytä TÄSMÄLLEEN samaa muotoa per rivi. Jos tunnistat useita erillisiä harmonialinjoja, voit luoda alaotsikoita kuten "Harmonia 1 (Jouset):", "Harmonia 2 (Padi):".
-    *   Esimerkki:
-        `Harmonia 1 (Jouset):`
-        `2.1 - E4 - 0.9`
-        `4.1 - D4 - 0.9`
-        `Harmonia 2 (Padi):`
-        `0.0 - C3 - 4.0`
-        `4.0 - G2 - 4.0`
-
-
-Anna vastaus selkeästi jäsenneltynä yllä olevien otsikoiden ja muotoilujen mukaisesti. Tarkkuus ajoituksissa, nuoteissa ja muotoilussa on äärimmäisen tärkeää parserointia varten.
+Vastaus **vain** JSON-muodossa, ei muuta tekstiä.
 """
 
 def parse_gemini_response(text):
-    """Jäsentää Geminin tekstivastauksen strukturoituun muotoon."""
-    data = {
-        "tempo": DEFAULT_BPM,
-        "key": "C Major", # Oletus
-        "chords": [],
-        "drums": [],
-        "melody": [],
-        "harmonies": [] # Yksi lista kaikille, ellei malli käytä alaotsikoita
-    }
-    current_section = None
-    current_harmony_group = None # Seurataan, mihin harmonialinjaan nuotit kuuluvat
+    """Jäsentää Geminin tekstivastauksen (JSON)."""
+    if not text:
+        print("Virhe: Gemini palautti tyhjän vastauksen.", file=sys.stderr)
+        return None
 
-    lines = text.splitlines()
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
+    cleaned_text = text.strip()
+    # Attempt to remove markdown code block fences
+    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned_text, re.IGNORECASE | re.DOTALL)
+    if match:
+        cleaned_text = match.group(1).strip()
 
-        # Tunnista osioiden otsikot (tehdään vähemmän herkäksi pienille muutoksille)
-        if re.match(r'^\d?\s*\.?\s*\*\*Tempo', line, re.IGNORECASE):
-            current_section = "tempo"
-            print("--- Jäsennetään Tempoa ---")
-            continue
-        if re.match(r'^\d?\s*\.?\s*\*\*Sävellaji', line, re.IGNORECASE):
-            current_section = "key"
-            print("--- Jäsennetään Sävellajia ---")
-            continue
-        if re.match(r'^\d?\s*\.?\s*\*\*Sointukierto', line, re.IGNORECASE):
-            current_section = "chords"
-            print("--- Jäsennetään Sointuja ---")
-            continue
-        if re.match(r'^\d?\s*\.?\s*\*\*Rummut', line, re.IGNORECASE):
-            current_section = "drums"
-            print("--- Jäsennetään Rumpuja ---")
-            continue
-        if re.match(r'^\d?\s*\.?\s*\*\*Lead-Melodia', line, re.IGNORECASE):
-            current_section = "melody"
-            print("--- Jäsennetään Melodiaa ---")
-            continue
-        # Käytä searchia harmonian otsikon tunnistamiseen, jotta '*   **Harmonia...*' toimii
-        if re.search(r'\*\*.*?Harmonia', line, re.IGNORECASE):
-             current_section = "harmonies"
-             # Tarkista, onko tämä alaotsikko (esim. "Harmonia 1 (Jouset):")
-             # Käytä searchia löytääksesi kuvion mistä tahansa, ottaen huomioon etuliitteet kuten '*  '
-             match_harmony_header = re.search(r'Harmonia\s*\d*\s*(\(.*\))?:?', line, re.IGNORECASE) # <-- Käytä searchia
-             if match_harmony_header:
-                 # Pura nimi luotettavammin, poistaen mahdolliset etu-/jälkiliitteet
-                 group_text = match_harmony_header.group(0).strip()
-                 # Poista mahdolliset listamerkit tai ylimääräiset merkit
-                 group_text = re.sub(r'^[*\-\s`]+', '', group_text) # Poista *, -, välilyönti, ` alusta
-                 group_text = group_text.strip(':*` ') # Poista :, *, `, välilyönti lopusta ja alusta
-                 current_harmony_group = group_text
-                 print(f"--- Jäsennetään Harmoniaa ({current_harmony_group}) ---")
-             else:
-                 # Jos pääotsikko ilman tarkempaa nimeä, käytä oletusta
-                 current_harmony_group = "Default Harmony"
-                 print("--- Jäsennetään Harmoniaa (Oletus) ---")
-             continue
+    try:
+        data = json.loads(cleaned_text)
         
-        # Varmista, ettei otsikkoriviä yritetä jäsentää datana (tämä on edelleen hyödyllinen pääotsikoille)
-        if line.startswith("**") or re.match(r'^\d\.', line):
-             continue
+        # Validate minimal structure
+        if not isinstance(data, dict):
+            print("Varoitus: Gemini-vastaus ei ole JSON-objekti.", file=sys.stderr)
+            return None
+        
+        # Ensure lists exist even if empty
+        data.setdefault("chords", [])
+        data.setdefault("drums", [])
+        data.setdefault("melody", [])
+        data.setdefault("harmonies", [])
+        data.setdefault("tempo", DEFAULT_BPM)
+        data.setdefault("key", "C Major")
 
+        print("Gemini-vastauksen jäsentäminen (JSON) valmis.")
+        print(f"  Tempo: {data.get('tempo')}")
+        print(f"  Sävellaji: {data.get('key')}")
+        print(f"  Sointuja: {len(data.get('chords'))}")
+        print(f"  Rumpu/Perkussioita: {len(data.get('drums'))}")
+        print(f"  Melodianuotteja: {len(data.get('melody'))}")
+        print(f"  Harmonianuotteja: {len(data.get('harmonies'))}")
+        
+        return data
 
-        # Jäsennä dataa osion perusteella
-        try:
-            if current_section == "tempo":
-                # Käytä searchia, se on robustimpi löytämään numeron '*   `123.4`' sisältä
-                match = re.search(r'(\d+(\.\d+)?)', line)
-                if match:
-                    data["tempo"] = float(match.group(1))
-                    print(f"Tunnistettu tempo: {data['tempo']} BPM")
-                    current_section = None # Estää seuraavan rivin lukemisen tempona
-
-            elif current_section == "key":
-                # Käytä searchia, robustimpi
-                match = re.search(r'([A-Ga-g][#b]?\s*(?:Major|Minor|Duuri|Molli))', line, re.IGNORECASE)
-                if match:
-                    data["key"] = match.group(1).strip()
-                    print(f"Tunnistettu sävellaji: {data['key']}")
-                    current_section = None # Estää seuraavan rivin lukemisen sävellajina
-                else:
-                    # Yritä purkaa `...` sisältä, jos tarkka kuvio ei täsmää
-                    match_generic = re.search(r'`(.+?)`', line)
-                    generic_key = match_generic.group(1).strip() if match_generic else line.lstrip('* ').strip() # Ota rivi ilman etuliitettä
-                    if len(generic_key) > 0 and len(generic_key) < 20: # Heuristinen tarkistus
-                         data["key"] = generic_key
-                         print(f"Tunnistettu sävellaji (geneerinen): {data['key']}")
-                         current_section = None
-
-
-            elif current_section == "chords":
-                # Käytä searchia ja käsittele valinnaiset backtickit
-                # `?(\d+(?:\.\d+)?)`? : Valinnainen `, numero, valinnainen `
-                # \s*-\s* : Välilyönti-viiva-välilyönti
-                # `?(.+?)`? : Valinnainen `, mikä tahansa merkki (ei-ahne), valinnainen `
-                # $ : Rivin loppu (auttaa välttämään osittaisia osumia)
-                match = re.search(r'`?(\d+(?:\.\d+)?)`?\s*-\s*`?(.+?)`?$', line)
-                if match:
-                    time_sec = float(match.group(1))
-                    chord_name = match.group(2).strip() # Poista mahdolliset ylimääräiset välilyönnit
-                    data["chords"].append({"time": time_sec, "name": chord_name})
-                    # print(f"Sointu: {time_sec:.2f}s - {chord_name}")
-                # Lisää else if debuggausta varten, jos rivi ei ole vain listamerkki
-                # elif line and not line.startswith('*'):
-                #    print(f"Varoitus: Riviä ei voitu jäsentää sointuna: '{line}'")
-
-
-            elif current_section == "drums":
-                 # Käytä searchia ja käsittele valinnaiset backtickit (sama kuin soinnuille)
-                match = re.search(r'`?(\d+(?:\.\d+)?)`?\s*-\s*`?(.+?)`?$', line)
-                if match:
-                    time_sec = float(match.group(1))
-                    instrument_name = match.group(2).strip()
-                    data["drums"].append({"time": time_sec, "instrument": instrument_name})
-                    # print(f"Rumpu: {time_sec:.2f}s - {instrument_name}")
-                # elif line and not line.startswith('*'):
-                #    print(f"Varoitus: Riviä ei voitu jäsentää rumpuna: '{line}'")
-
-
-            elif current_section == "melody" or current_section == "harmonies":
-                 # Käytä searchia ja käsittele valinnaiset backtickit, salli pilkku/piste desimaalierottimena
-                 # `?(\d+(?:[.,]\d+)?)`? : Aika
-                 # \s*-\s*
-                 # `?([A-Ga-g][#b]?\d)`? : Nuotti (esim. C4, F#5)
-                 # \s*-\s*
-                 # `?(\d+(?:[.,]\d+)?)`? : Kesto
-                 match = re.search(r'`?(\d+(?:[.,]\d+)?)`?\s*-\s*`?([A-Ga-g][#b]?\d)`?\s*-\s*`?(\d+(?:[.,]\d+)?)`?', line.replace(',', '.'))
-                 if match:
-                     time_sec = float(match.group(1))
-                     note_name = match.group(2).strip()
-                     duration_sec = float(match.group(3))
-                     note_data = {"time": time_sec, "note": note_name, "duration": duration_sec}
-                     if current_section == "melody":
-                         data["melody"].append(note_data)
-                         # print(f"Melodia: {time_sec:.2f}s - {note_name} - {duration_sec:.2f}s")
-                     else:
-                         # Lisää tieto mihin harmoniaryhmään kuuluu, jos tunnistettu
-                         note_data["group"] = current_harmony_group if current_harmony_group else "Default Harmony"
-                         data["harmonies"].append(note_data)
-                         # print(f"Harmonia ({note_data['group']}): {time_sec:.2f}s - {note_name} - {duration_sec:.2f}s")
-                 # Tunnista instrumenttirivit (käytä searchia ja poista backtickit)
-                 elif re.search(r'Instrumentti:', line, re.IGNORECASE) and current_section == "melody":
-                     instr_name = line.split(':', 1)[1].strip(' `') # Poista myös backtickit
-                     print(f"Tunnistettu melodiainstrumentti (info): {instr_name}")
-                 # Harmonian alaotsikot käsitellään jo otsikkologiikassa, joten ohita ne tässä
-                 elif re.search(r'Harmonia\s*\d*\s*\(.*\)?:\s*$', line, re.IGNORECASE) and current_section == "harmonies":
-                     pass # Jo käsitelty
-                 # elif line and not line.startswith('*') and not re.search(r'Instrumentti:', line, re.IGNORECASE): # Vältä varoitusta listamerkeistä tai instrumenttiriveistä
-                 #    print(f"Varoitus: Riviä ei voitu jäsentää nuottina ({current_section}): '{line}'")
-
-
-        except ValueError as e:
-            print(f"Varoitus: Virhe jäsentäessä riviä ({current_section}): '{line}'. Virhe: {e}")
-        except Exception as e:
-            print(f"Odottamaton virhe jäsentäessä riviä ({current_section}): '{line}'. Virhe: {e}")
-
-
-    # Lajitellaan tapahtumat ajan mukaan käsittelyn helpottamiseksi
-    for key in ["chords", "drums", "melody", "harmonies"]:
-         if key in data and isinstance(data[key], list):
-            data[key].sort(key=lambda x: x.get('time', 0))
-
-
-    print("Gemini-vastauksen jäsentäminen valmis.")
-    # Tulosta yhteenveto tunnistetuista elementeistä
-    print(f"  Tempo: {data.get('tempo', 'Ei tunnistettu')}")
-    print(f"  Sävellaji: {data.get('key', 'Ei tunnistettu')}")
-    print(f"  Sointuja: {len(data.get('chords', []))}")
-    print(f"  Rumpu/Perkussioita: {len(data.get('drums', []))}")
-    print(f"  Melodianuotteja: {len(data.get('melody', []))}")
-    print(f"  Harmonianuotteja: {len(data.get('harmonies', []))}")
-
-    return data
+    except json.JSONDecodeError as e:
+        print(f"Virhe jäsennettäessä JSON-vastausta: {e}", file=sys.stderr)
+        print(f"Alkuperäinen teksti: {text[:200]}...", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"Odottamaton virhe vastauksen käsittelyssä: {e}", file=sys.stderr)
+        return None
 
 # --- Pääohjelma ---
 if __name__ == "__main__":
