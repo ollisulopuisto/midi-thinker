@@ -1,5 +1,5 @@
 import os
-from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, message_dialog
+from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, message_dialog, checkboxlist_dialog
 from prompt_toolkit.validation import Validator, ValidationError
 from prompt_toolkit.completion import PathCompleter
 
@@ -52,7 +52,7 @@ def get_user_input(input_path: str, num_tracks: int, midi_type: int = 1):
 
     Returns:
         dict: A dictionary containing the user's selections (excluding input_path),
-              e.g., {'output_path': '...', 'mode': '...', 'target_track_index': 0, ...}
+              e.g., {'output_path': '...', 'mode': '...', 'target_track_indices': [0], ...}
               Returns None if the user cancels any step.
     """
     settings = {}
@@ -88,28 +88,33 @@ def get_user_input(input_path: str, num_tracks: int, midi_type: int = 1):
 
     # 3. Get Mode-Specific Parameters
     if mode == 'extend':
-        # 3a. Select Track to Extend (if multiple tracks exist)
-        target_track_index = 0
+        # 3a. Select Tracks to Extend (if multiple tracks exist)
+        target_track_indices = [0]
         if num_tracks > 1:
             track_values = [(str(i), f"Track {i}") for i in range(num_tracks)]
-            selected_track_str = radiolist_dialog(
-                title='Select Track to Extend',
-                text=f'Which track do you want to extend? (0-{num_tracks-1})',
-                values=track_values
+            selected_tracks = checkboxlist_dialog(
+                title='Select Tracks to Extend',
+                text=f'Which tracks do you want to extend? (0-{num_tracks-1})',
+                values=track_values,
+                default_values=['0'] if num_tracks > 0 else []
             ).run()
-            if selected_track_str is None:
+            if selected_tracks is None:
                 return None # User cancelled
-            target_track_index = int(selected_track_str)
+            if not selected_tracks:
+                # Fallback to Track 0 if none selected
+                target_track_indices = [0]
+            else:
+                target_track_indices = [int(i) for i in selected_tracks]
         else:
             print("Only one track found. Extending Track 0.")
-            # target_track_index remains 0
+            # target_track_indices remains [0]
 
-        settings['target_track_index'] = target_track_index
+        settings['target_track_indices'] = target_track_indices
 
         # 3b. Get Bars to Extend
         bars = input_dialog(
             title='Extend Settings',
-            text=f'Enter the number of bars to extend Track {target_track_index}:',
+            text='Enter the number of bars to extend the selected tracks:',
             default='4',
             validator=NumberValidator()
         ).run()
@@ -127,6 +132,29 @@ def get_user_input(input_path: str, num_tracks: int, midi_type: int = 1):
         if comp_type is None:
             return None # User cancelled
         settings['complement_type'] = comp_type
+
+        # 3c. Select Instrument for Complement
+        instrument_values = [
+            ('0', 'Acoustic Grand Piano'),
+            ('32', 'Acoustic Bass'),
+            ('33', 'Electric Bass (finger)'),
+            ('48', 'String Ensemble 1'),
+            ('52', 'Choir Aahs'),
+            ('61', 'Brass Section'),
+            ('73', 'Flute'),
+            ('80', 'Lead 1 (square)'),
+            ('81', 'Lead 2 (sawtooth)'),
+            ('89', 'Pad 2 (warm)'),
+        ]
+        selected_instr_str = radiolist_dialog(
+            title='Select Instrument',
+            text='Choose an instrument for the new track:',
+            values=instrument_values,
+            default='32' if 'bass' in comp_type.lower() else '0'
+        ).run()
+        if selected_instr_str is None:
+            return None # User cancelled
+        settings['instrument_program'] = int(selected_instr_str)
     
     # 4. Get Optional Style/Variation
     style_variation = input_dialog(

@@ -1,8 +1,7 @@
-import pytest
 import os
 import sys
-import json
 import importlib.util
+import mido
 
 # Helper to import module with a hyphen in its name
 def import_module_from_path(module_name, file_path):
@@ -12,7 +11,6 @@ def import_module_from_path(module_name, file_path):
     spec.loader.exec_module(module)
     return module
 
-import mido
 # Path to music-analyzer.py
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
@@ -73,6 +71,14 @@ def test_parse_midi_to_mvp_json_type0():
     assert json_data['key_signature'] == 'C'
     assert json_data['time_signature']['numerator'] == 4
     assert json_data['ticks_per_beat'] == mid.ticks_per_beat
+    
+    # Check meta_changes
+    assert 'meta_changes' in json_data
+    assert len(json_data['meta_changes']) >= 3
+    # Check for tempo change
+    tempo_changes = [c for c in json_data['meta_changes'] if c['type'] == 'tempo']
+    assert len(tempo_changes) > 0
+    assert tempo_changes[0]['bpm'] == 120
 
     # Check track structure
     assert len(json_data['tracks']) == 1
