@@ -205,6 +205,25 @@ def show_success_with_action(title, text, file_path):
     if result:
         open_file_folder(file_path)
 
+def ask_refine_or_save():
+    """Prompts the user to either accept the generation or refine it."""
+    return button_dialog(
+        title='Refinement',
+        text='How do you like this version? You can save it or ask Gemini to refine it with feedback.',
+        buttons=[
+            ('Accept & Save', 'save'),
+            ('Refine with Feedback', 'refine'),
+            ('Cancel', 'cancel')
+        ]
+    ).run()
+
+def get_refinement_feedback():
+    """Prompts the user for feedback on how to refine the generation."""
+    return input_dialog(
+        title='Refine Generation',
+        text='What would you like to change? (e.g., "more bass", "too many notes", "syncopate the rhythm"):'
+    ).run()
+
 def show_error(title, text):
     """Displays an error message dialog."""
     # Remove the style argument to avoid the AttributeError

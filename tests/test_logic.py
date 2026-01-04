@@ -128,6 +128,22 @@ def test_parse_gemini_analysis_with_sections():
     assert len(parsed_data["sections"]) == 2
     assert parsed_data["sections"][1]["name"] == "Verse"
 
+def test_midi_cloning_for_refinement():
+    """Verifies that we can clone a MidiFile to allow non-destructive refinement."""
+    test_midi_path = "tests/fixtures/test_midi_type0.mid"
+    original_mid = mido.MidiFile(test_midi_path)
+    original_note_count = len([m for m in original_mid.tracks[0] if m.type == 'note_on'])
+
+    # "Clone" by saving to buffer or just re-opening
+    # In mido, there isn't a deepcopy, so we'll test the logic of starting from original each time
+    clone_mid = mido.MidiFile(test_midi_path)
+    
+    # Modify clone
+    clone_mid.tracks[0].append(mido.Message('note_on', note=70, velocity=64, time=0))
+    
+    assert len(clone_mid.tracks[0]) > len(original_mid.tracks[0])
+    assert len([m for m in clone_mid.tracks[0] if m.type == 'note_on']) == original_note_count + 1
+
 # --- Tests for imagine-music.py ---
 
 def test_parse_midi_to_mvp_json_type0():
