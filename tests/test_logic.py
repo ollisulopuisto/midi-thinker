@@ -1,7 +1,9 @@
 import os
 import sys
 import importlib.util
+import pytest
 import mido
+import tui
 
 # Helper to import module with a hyphen in its name
 def import_module_from_path(module_name, file_path):
@@ -19,8 +21,42 @@ analyzer_path = os.path.join(project_root, 'music-analyzer.py')
 music_analyzer = import_module_from_path('music_analyzer', analyzer_path)
 imagine_music = import_module_from_path('imagine_music', os.path.join(project_root, 'imagine-music.py'))
 
+# --- Tests for tui.py ---
+
+def test_number_validator():
+    """Tests the NumberValidator in TUI."""
+    validator = tui.NumberValidator()
+    from prompt_toolkit.document import Document
+    
+    # Valid input
+    validator.validate(Document("4"))
+    
+    # Invalid input (not a number)
+    with pytest.raises(tui.ValidationError):
+        validator.validate(Document("abc"))
+        
+    # Invalid input (negative)
+    with pytest.raises(tui.ValidationError):
+        validator.validate(Document("-1"))
+
+def test_not_empty_validator():
+    """Tests the NotEmptyValidator in TUI."""
+    validator = tui.NotEmptyValidator()
+    from prompt_toolkit.document import Document
+    
+    # Valid input
+    validator.validate(Document("something"))
+    
+    # Invalid input (empty)
+    with pytest.raises(tui.ValidationError):
+        validator.validate(Document(""))
+        
+    # Invalid input (whitespace only)
+    with pytest.raises(tui.ValidationError):
+        validator.validate(Document("   "))
 
 # --- Tests for music-analyzer.py ---
+
 
 def test_parse_gemini_response_valid_json():
     """Tests parsing of a valid JSON string from Gemini."""
@@ -193,3 +229,41 @@ def test_parse_midi_to_mvp_json_type0():
     # Check end tick calculation
     assert len(track_end_ticks) == 1
     assert track_end_ticks[0] == 1920
+
+def test_generated_notes_to_midi_events():
+    """Tests conversion of Gemini's JSON notes to mido messages."""
+    generated_notes = [
+        { "pitch": 60, "start_tick": 0, "duration_tick": 480, "velocity": 90 },
+        { "pitch": 62, "start_tick": 480, "duration_tick": 480, "velocity": 90 }
+    ]
+    start_offset = 1000
+    events = imagine_music.generated_notes_to_midi_events(generated_notes, start_offset)
+    
+    assert len(events) == 4 # 2 notes * (on + off)
+    # Check first note on
+    assert events[0].type == 'note_on'
+    assert events[0].note == 60
+    assert events[0].time == 0 # Delta 0 relative to start_offset
+    # Check first note off
+    assert events[1].type == 'note_off'
+    assert events[1].note == 60
+    assert events[1].time == 480
+    # Check second note on
+    assert events[2].type == 'note_on'
+    assert events[2].note == 62
+    assert events[2].time == 0 # Should start immediately after prev note off at tick 1480
+    
+def test_humanize_mido_events():
+    """Tests the humanization logic for subtle variations."""
+    messages = [
+        mido.Message('note_on', note=60, velocity=90, time=0),
+        mido.Message('note_off', note=60, velocity=0, time=480)
+    ]
+    
+    humanized = imagine_music.humanize_mido_events(messages, velocity_range=10, timing_range=5)
+    
+    # Velocities should be within range
+    for m in humanized:
+        if m.type == 'note_on':
+            assert 80 <= m.velocity <= 100
+        assert m.time >= 0

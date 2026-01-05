@@ -192,6 +192,11 @@ def parse_gemini_response(text):
         data.setdefault("tempo", DEFAULT_BPM)
         data.setdefault("key", "C Major")
         
+        # Sort events by time for correct delta calculation
+        for key in ["chords", "drums", "melody", "harmonies"]:
+            if isinstance(data.get(key), list):
+                data[key].sort(key=lambda x: x.get('time', 0))
+
         print("Gemini-vastauksen jäsentäminen (JSON) valmis.")
         return data
     except Exception as e:
