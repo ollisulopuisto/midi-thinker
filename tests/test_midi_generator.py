@@ -1,5 +1,6 @@
 import pytest
 import mido
+
 from midi_generator import note_name_to_midi, seconds_to_ticks
 
 def test_note_name_to_midi_valid():

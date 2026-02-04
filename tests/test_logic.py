@@ -1,9 +1,12 @@
 import os
 import sys
 import importlib.util
-import pytest
+
 import mido
+import pytest
+
 import tui
+
 
 # Helper to import module with a hyphen in its name
 def import_module_from_path(module_name, file_path):
@@ -13,10 +16,8 @@ def import_module_from_path(module_name, file_path):
     spec.loader.exec_module(module)
     return module
 
-# Path to music-analyzer.py
+# Path to modules (conftest.py handles sys.path, but we need dynamic import for hyphenated files)
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 analyzer_path = os.path.join(project_root, 'music-analyzer.py')
 music_analyzer = import_module_from_path('music_analyzer', analyzer_path)
 imagine_music = import_module_from_path('imagine_music', os.path.join(project_root, 'imagine-music.py'))
