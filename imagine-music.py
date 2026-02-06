@@ -8,7 +8,12 @@ from dotenv import load_dotenv
 import re
 import hashlib
 import random
-from tui import get_user_input, select_input_file, show_error, show_success_with_action, show_analysis_results, ask_refine_or_save, get_refinement_feedback
+from tui import (
+    get_user_input, select_input_file, show_error, show_success_with_action,
+    show_analysis_results, ask_refine_or_save, get_refinement_feedback,
+    show_main_menu, get_song_generation_config, show_generation_preview, show_success,
+    select_song_source
+)
 
 # Default values if not found in MIDI
 DEFAULT_TEMPO = 500000  # 120 bpm
@@ -621,8 +626,80 @@ def main():
 
     parser = argparse.ArgumentParser(description="Modify or extend a MIDI file using Gemini.")
     parser.add_argument("-i", "--input", type=str, help="Path to the input MIDI file.")
+    parser.add_argument("-g", "--generate", action="store_true", help="Generate new song from song_data.py")
     args = parser.parse_args()
 
+    # If --generate flag is passed, go directly to generation
+    if args.generate:
+        main_mode = 'generate'
+    elif args.input:
+        main_mode = 'modify'
+    else:
+        # Show main menu
+        main_mode = show_main_menu()
+        if not main_mode:
+            sys.exit(0)
+
+    # --- GENERATE MODE ---
+    if main_mode == 'generate':
+        import importlib.util
+        
+        # Select song source file
+        song_source_path = select_song_source()
+        if not song_source_path:
+            sys.exit(0)
+        
+        # Dynamically load the song_data module from the selected file
+        try:
+            spec = importlib.util.spec_from_file_location("song_data", song_source_path)
+            song_data = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(song_data)
+        except Exception as e:
+            show_error("Import Error", f"Could not load song source '{song_source_path}': {e}")
+            sys.exit(1)
+        
+        try:
+            import studio
+            # Inject the loaded song_data into studio module
+            studio.song_data = song_data
+        except ImportError as e:
+            show_error("Import Error", f"Could not import studio module: {e}")
+            sys.exit(1)
+        
+        # Show preview of what will be generated
+        show_generation_preview(song_data.TRACKS, song_data.ARRANGEMENT)
+        
+        # Get optional config overrides (use song_data defaults)
+        config = get_song_generation_config()
+        if not config:
+            sys.exit(0)
+        
+        # Override song_data values if user provided different ones
+        if config['filename']:
+            song_data.FILENAME = config['filename']
+        if config['tempo']:
+            song_data.TEMPO = config['tempo']
+        
+        # Generate MIDI
+        print(f"\nGenerating: {song_data.FILENAME} at {song_data.TEMPO} BPM")
+        print(f"Source: {song_source_path}")
+        midi_path = studio.generate_midi()
+        
+        # Generate tabs if requested
+        tabs_path = None
+        if config.get('generate_tabs'):
+            tabs_path = studio.generate_tabs()
+        
+        # Show success with path to open
+        message = f"Created: {midi_path}\nTempo: {song_data.TEMPO} BPM\nSource: {song_source_path}"
+        if tabs_path:
+            message += f"\nTabs: {tabs_path}"
+        
+        show_success_with_action("Generation Complete", message, midi_path)
+        print("\n--- STUDIO SESSION COMPLETE ---")
+        sys.exit(0)
+
+    # --- MODIFY MODE ---
     input_midi_path = args.input or select_input_file()
     if not input_midi_path:
         sys.exit(0)

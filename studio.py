@@ -2,17 +2,36 @@
 MIDI Studio - MIDI Generation and Tab Generator
 ------------------------------------------------
 Generates MIDI files and ASCII guitar tabs from song data.
+Output files are saved to the 'songs/' subdirectory.
 """
 
+import os
 import song_data
 from midiutil import MIDIFile
 
 
-# --- OSA 1: MIDI ENGINE ---
+# Output directory for generated files
+OUTPUT_DIR = "songs"
+
+
+def ensure_output_dir():
+    """Creates the output directory if it doesn't exist."""
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+def get_output_path(filename):
+    """Returns the full path for an output file."""
+    ensure_output_dir()
+    return os.path.join(OUTPUT_DIR, filename)
+
+
+# --- PART 1: MIDI ENGINE ---
 
 
 def generate_midi():
-    print(f"\n--- 1. GENERATING MIDI: {song_data.FILENAME} ---")
+    """Generates MIDI file from song_data and saves to songs/ directory."""
+    output_path = get_output_path(song_data.FILENAME)
+    print(f"\n--- 1. GENERATING MIDI: {output_path} ---")
     mid = MIDIFile(len(song_data.TRACKS))
 
     # 1. Setup Tracks
@@ -28,12 +47,12 @@ def generate_midi():
         mid.addText(0, bar_offset, section["name"])
 
         for part in section["parts"]:
-            # Etsi raidan tiedot ID:n perusteella
+            # Find track info by ID
             t_info = next(t for t in song_data.TRACKS if t["id"] == part["track_id"])
 
             notes = []
 
-            # Pattern (soita kerran) vs Loop (täytä koko osio)
+            # Pattern (play once) vs Loop (fill entire section)
             if "pattern" in part:
                 notes = part["pattern"]
             elif "loop_pattern" in part:
@@ -41,8 +60,8 @@ def generate_midi():
                 section_len = section["length_bars"] * 4
                 cursor = 0
 
-                # Laske loopin pituus
-                loop_len = 4  # Oletus 1 tahti
+                # Calculate loop length
+                loop_len = 4  # Default 1 bar
                 if len(pat) > 0:
                     last_note_end = max(pat, key=lambda x: x[1])
                     loop_len = max(4, last_note_end[1] + last_note_end[2])
@@ -53,37 +72,38 @@ def generate_midi():
                             notes.append((p, t + cursor, d, v))
                     cursor += loop_len
 
-            # Kirjoita MIDI-tiedostoon
+            # Write to MIDI file
             for pitch, start, dur, vel in notes:
                 mid.addNote(
                     t_info["id"], t_info["channel"], pitch, bar_offset + start, dur, vel
                 )
 
-    with open(song_data.FILENAME, "wb") as f:
+    with open(output_path, "wb") as f:
         mid.writeFile(f)
-    print("   DONE: MIDI file created.")
+    print(f"   DONE: MIDI file created at {output_path}")
+    return output_path
 
 
-# --- OSA 2: TAB GENERATOR (DROP D) ---
+# --- PART 2: TAB GENERATOR (DROP D) ---
 
-# Drop D vire: D A D G B e
+# Drop D tuning: D A D G B e
 TUNING_DROPD = {6: 38, 5: 45, 4: 50, 3: 55, 2: 59, 1: 64}
 STRINGS = {1: "e", 2: "B", 3: "G", 4: "D", 5: "A", 6: "D"}
-CHARS_PER_BEAT = 8  # Resoluutio
+CHARS_PER_BEAT = 8  # Resolution
 
 
 def get_best_fret(pitch, prev_string=None):
-    """Etsii parhaan nauhan ja kielen nuotille (Drop D optimoitu)."""
+    """Finds the best fret and string for a note (Drop D optimized)."""
     candidates = []
-    for s_num in range(6, 0, -1):  # Käy kielet läpi 6 -> 1
+    for s_num in range(6, 0, -1):  # Check strings 6 -> 1
         base = TUNING_DROPD[s_num]
         fret = pitch - base
         if 0 <= fret <= 22:
-            score = 100 if fret == 0 else 0  # Vapaa kieli on paras
-            score += 50 if s_num >= 4 else 0  # Paksut kielet riffeille
-            score -= 20 if fret > 12 else 0  # Vältä kaulan yläpäätä jos mahd.
+            score = 100 if fret == 0 else 0  # Open string is best
+            score += 50 if s_num >= 4 else 0  # Prefer thicker strings for riffs
+            score -= 20 if fret > 12 else 0  # Avoid high frets if possible
             if prev_string and abs(prev_string - s_num) > 1:
-                score -= 30  # Vältä suurta kielihyppyä
+                score -= 30  # Avoid large string jumps
             candidates.append((score, s_num, fret))
 
     if not candidates:
@@ -93,15 +113,28 @@ def get_best_fret(pitch, prev_string=None):
 
 
 def generate_tabs():
-    print("\n--- 2. GENERATING TABS (Drop D) ---")
+    """Generates ASCII guitar tabs and saves to a .txt file."""
+    # Generate tab filename from MIDI filename
+    base_name = os.path.splitext(song_data.FILENAME)[0]
+    tab_filename = f"{base_name}_tabs.txt"
+    output_path = get_output_path(tab_filename)
+
+    lines = []
+    lines.append("=" * 60)
+    lines.append(f"GUITAR TABS (Drop D Tuning)")
+    lines.append(f"Song: {song_data.FILENAME} | Tempo: {song_data.TEMPO} bpm")
+    lines.append("=" * 60)
+
+    print(f"\n--- 2. GENERATING TABS (Drop D) ---")
     print(f"   Song: {song_data.FILENAME} | Tempo: {song_data.TEMPO} bpm")
 
-    # Etsi kaikki raidat joissa lukee "Gtr" tai "Lead"
+    # Find all tracks containing "Gtr" or "Lead"
     gtr_tracks = [
         t for t in song_data.TRACKS if "Gtr" in t["name"] or "Lead" in t["name"]
     ]
 
     for section in song_data.ARRANGEMENT:
+        lines.append(f"\n[{section['name']}]")
         print(f"\n   [{section['name']}]")
         total_beats = section["length_bars"] * 4
 
@@ -112,14 +145,15 @@ def generate_tabs():
             if not part:
                 continue
 
+            lines.append(f"Instrument: {t_info['name']}")
             print(f"   Instr: {t_info['name']}")
 
-            # 1. Kerää nuotit (Pattern tai Loop)
+            # 1. Collect notes (Pattern or Loop)
             notes_to_show = []
             if "pattern" in part:
                 notes_to_show = part["pattern"]
             elif "loop_pattern" in part:
-                # Näytä vain max 4 tahtia loopista tilan säästämiseksi
+                # Show only max 4 bars of loop to save space
                 limit = min(total_beats, 16)
                 pat = part["loop_pattern"]
                 cursor = 0
@@ -129,10 +163,10 @@ def generate_tabs():
                             notes_to_show.append((p, t + cursor, d, v))
                     cursor += 4
 
-            # 2. Luo ASCII Grid
+            # 2. Create ASCII Grid
             grid = {s: ["-"] * int(total_beats * CHARS_PER_BEAT) for s in range(1, 7)}
 
-            # 3. Sijoita nuotit gridiin
+            # 3. Place notes in grid
             time_map = {}
             for p, t, d, v in notes_to_show:
                 if t not in time_map:
@@ -142,32 +176,44 @@ def generate_tabs():
             prev_s = None
             for t in sorted(time_map.keys()):
                 idx = int(t * CHARS_PER_BEAT)
-                chord = sorted(time_map[t])  # Järjestä matalasta korkeaan
+                chord = sorted(time_map[t])  # Sort low to high
 
                 for pitch in chord:
                     res = get_best_fret(pitch, prev_s)
                     if res:
                         s, f = res
                         f_str = str(f)
-                        # Kirjoita numero gridiin
+                        # Write number to grid
                         for char_i, char in enumerate(f_str):
                             if idx + char_i < len(grid[s]):
                                 grid[s][idx + char_i] = char
                         prev_s = s
 
-            # 4. Tulosta kielet
+            # 4. Format and output strings
             for s in range(1, 7):
                 line = "".join(grid[s])
-                # Lisää tahtiviivat luettavuuden vuoksi
+                # Add bar lines for readability
                 formatted = ""
                 chunk_size = 4 * CHARS_PER_BEAT
                 for i in range(0, len(line), chunk_size):
                     formatted += line[i : i + chunk_size] + "|"
-                print(f"   {STRINGS[s]}|{formatted}")
+                tab_line = f"{STRINGS[s]}|{formatted}"
+                lines.append(tab_line)
+                print(f"   {tab_line}")
+            lines.append("")
             print("")
+
+    # Write tabs to file
+    with open(output_path, "w") as f:
+        f.write("\n".join(lines))
+
+    print(f"   DONE: Tabs saved to {output_path}")
+    return output_path
 
 
 if __name__ == "__main__":
-    generate_midi()
-    generate_tabs()
-    print("\n--- STUDIO SESSION COMPLETE ---")
+    midi_path = generate_midi()
+    tabs_path = generate_tabs()
+    print(f"\n--- STUDIO SESSION COMPLETE ---")
+    print(f"   MIDI: {midi_path}")
+    print(f"   Tabs: {tabs_path}")

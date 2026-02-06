@@ -233,6 +233,134 @@ def show_success(title, text):
     """Displays a success message dialog."""
     message_dialog(title=title, text=text).run()
 
+
+def show_main_menu():
+    """
+    Displays the main menu for selecting the operation mode.
+    
+    Returns:
+        str: 'modify' to modify existing MIDI, 'generate' to generate new song,
+             or None if cancelled.
+    """
+    return radiolist_dialog(
+        title='MIDI Thinker',
+        text='What would you like to do?',
+        values=[
+            ('modify', 'Modify Existing MIDI - Extend or add tracks to an existing file'),
+            ('generate', 'Generate New Song - Create a new MIDI from song data'),
+        ]
+    ).run()
+
+
+def get_song_generation_config():
+    """
+    Prompts the user to configure song generation parameters.
+    
+    Returns:
+        dict: Configuration with filename, tempo, etc. or None if cancelled.
+    """
+    config = {}
+    
+    # 1. Output filename
+    config['filename'] = input_dialog(
+        title='Output Filename',
+        text='Enter the output MIDI filename:',
+        default='my_song.mid',
+        validator=NotEmptyValidator()
+    ).run()
+    if config['filename'] is None:
+        return None
+    
+    # Ensure .mid extension
+    if not config['filename'].endswith('.mid'):
+        config['filename'] += '.mid'
+    
+    # 2. Tempo
+    tempo = input_dialog(
+        title='Tempo',
+        text='Enter the tempo in BPM:',
+        default='120',
+        validator=NumberValidator()
+    ).run()
+    if tempo is None:
+        return None
+    config['tempo'] = int(tempo)
+    
+    # 3. Generate tabs?
+    generate_tabs = button_dialog(
+        title='Generate Tabs',
+        text='Do you want to generate ASCII guitar tabs (Drop D tuning)?',
+        buttons=[
+            ('Yes', True),
+            ('No', False)
+        ]
+    ).run()
+    config['generate_tabs'] = generate_tabs if generate_tabs is not None else False
+    
+    return config
+
+
+def show_generation_preview(tracks, arrangement):
+    """
+    Shows a preview of what will be generated.
+    
+    Args:
+        tracks: List of track dictionaries
+        arrangement: List of arrangement sections
+    """
+    lines = ["=== Song Preview ===\n"]
+    
+    lines.append("TRACKS:")
+    for t in tracks:
+        lines.append(f"  {t['id']}: {t['name']} (Ch {t['channel']}, Patch {t['patch']})")
+    
+    lines.append("\nARRANGEMENT:")
+    for section in arrangement:
+        lines.append(f"  {section['name']}: {section['length_bars']} bars (starting bar {section['start_bar']})")
+        for part in section['parts']:
+            track_name = next((t['name'] for t in tracks if t['id'] == part['track_id']), f"Track {part['track_id']}")
+            pattern_type = 'loop' if 'loop_pattern' in part else 'pattern'
+            lines.append(f"    - {track_name} ({pattern_type})")
+    
+    message_dialog(title='Generation Preview', text='\n'.join(lines)).run()
+
+
+def select_song_source():
+    """
+    Scans song_sources/ directory for .py files and lets user select one.
+    Falls back to song_data.py if no files found or user wants default.
+    
+    Returns:
+        str: Path to the selected song source file, or None if cancelled.
+    """
+    import os
+    
+    source_dir = "song_sources"
+    song_files = []
+    
+    # Scan for .py files in song_sources/
+    if os.path.isdir(source_dir):
+        for f in sorted(os.listdir(source_dir)):
+            if f.endswith('.py') and not f.startswith('__'):
+                song_files.append(f)
+    
+    # Build selection values
+    values = [('song_data.py', 'song_data.py (default)')]
+    for f in song_files:
+        values.append((os.path.join(source_dir, f), f"{f} (from {source_dir}/)"))
+    
+    if len(values) == 1:
+        # Only default available, just use it
+        return 'song_data.py'
+    
+    result = radiolist_dialog(
+        title='Select Song Source',
+        text='Choose a song data file to generate from:',
+        values=values
+    ).run()
+    
+    return result
+
 def show_analysis_results(title: str, analysis_data: dict | None):
     """
     Displays the structured analysis results from a dictionary in a message dialog.

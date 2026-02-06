@@ -8,7 +8,7 @@ This project aims to create a tool that leverages the Gemini API to analyze and 
 
 *   **Programming Language:** Python 3.x
 *   **MIDI Library:** `mido` (for low-level MIDI event manipulation). `pretty_midi` might be considered post-MVP for easier structural analysis.
-*   **Gemini API Client:** Google AI Python SDK (`google-generativeai`).
+*   **Gemini API Client:** Google AI Python SDK (`google-genai`).
 *   **User Interface:** Command-Line Interface (CLI) enhanced with Textual User Interface (TUI) via `prompt_toolkit`. *(Updated)*
 *   **Data Representation for Gemini:** JSON. The complexity will evolve from MVP to later stages.
 

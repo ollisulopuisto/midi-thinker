@@ -23,3 +23,7 @@ generate_sample_midi.py
 samples/*modified.mid
 *.mid
 .music-analyzer-cache/*
+song_data.py
+songs/
+song_sources/*.py
+!song_sources/example_song.py
