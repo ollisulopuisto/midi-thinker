@@ -1,18 +1,27 @@
-import mido
-import sys
+import argparse
+import hashlib
 import json
 import os
-import argparse
-from google import genai
-from dotenv import load_dotenv
-import re
-import hashlib
 import random
+import re
+import sys
+
+import mido
+from dotenv import load_dotenv
+from google import genai
+
 from tui import (
-    get_user_input, select_input_file, show_error, show_success_with_action,
-    show_analysis_results, ask_refine_or_save, get_refinement_feedback,
-    show_main_menu, get_song_generation_config, show_generation_preview, show_success,
-    select_song_source
+    ask_refine_or_save,
+    get_refinement_feedback,
+    get_song_generation_config,
+    get_user_input,
+    select_input_file,
+    select_song_source,
+    show_analysis_results,
+    show_error,
+    show_generation_preview,
+    show_main_menu,
+    show_success_with_action,
 )
 
 # Default values if not found in MIDI
@@ -89,17 +98,16 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
 
             if msg.type == 'note_on' and msg.velocity > 0:
                 active_notes[msg.note] = (current_time_ticks, msg.velocity)
-            elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-                if msg.note in active_notes:
-                    start_tick, velocity = active_notes.pop(msg.note)
-                    duration_tick = current_time_ticks - start_tick
-                    if duration_tick >= 0:
-                        notes.append({
-                            "pitch": msg.note,
-                            "start_tick": start_tick,
-                            "duration_tick": duration_tick,
-                            "velocity": velocity
-                        })
+            elif (msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0)) and msg.note in active_notes:
+                start_tick, velocity = active_notes.pop(msg.note)
+                duration_tick = current_time_ticks - start_tick
+                if duration_tick >= 0:
+                    notes.append({
+                        "pitch": msg.note,
+                        "start_tick": start_tick,
+                        "duration_tick": duration_tick,
+                        "velocity": velocity
+                    })
 
         all_tracks_data.append({
             "instrument_program": first_program_change if found_program_change else 0,
@@ -130,17 +138,16 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
 
                 if msg.type == 'note_on' and msg.velocity > 0:
                     active_notes[msg.note] = (current_time_ticks, msg.velocity)
-                elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-                    if msg.note in active_notes:
-                        start_tick, velocity = active_notes.pop(msg.note)
-                        duration_tick = current_time_ticks - start_tick
-                        if duration_tick >= 0:
-                            notes.append({
-                                "pitch": msg.note,
-                                "start_tick": start_tick,
-                                "duration_tick": duration_tick,
-                                "velocity": velocity
-                            })
+                elif (msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0)) and msg.note in active_notes:
+                    start_tick, velocity = active_notes.pop(msg.note)
+                    duration_tick = current_time_ticks - start_tick
+                    if duration_tick >= 0:
+                        notes.append({
+                            "pitch": msg.note,
+                            "start_tick": start_tick,
+                            "duration_tick": duration_tick,
+                            "velocity": velocity
+                        })
 
             all_tracks_data.append({
                 "instrument_program": first_program_change if found_program_change else 0,
@@ -327,7 +334,7 @@ Analysis JSON:
         show_error("Analysis Error", error_msg)
         return None
 
-def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_indices: list[int], style_variation: str = "", sections: list = None, feedback: str = "", previous_response: str = ""):
+def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_indices: list[int], style_variation: str = "", sections: list | None = None, feedback: str = "", previous_response: str = ""):
     """
     Constructs a prompt and calls the Gemini API to generate extended notes
     for the specified target tracks, using all tracks as context.
@@ -432,7 +439,7 @@ Generated Notes JSON:
         show_error("Gemini Error", error_msg)
         return None
 
-def call_gemini_for_complement(mvp_json_data: dict, complement_type: str, style_variation: str = "", instrument_hint: int = None, feedback: str = "", previous_response: str = ""):
+def call_gemini_for_complement(mvp_json_data: dict, complement_type: str, style_variation: str = "", instrument_hint: int | None = None, feedback: str = "", previous_response: str = ""):
     """
     (Post-MVP)
     Constructs a prompt and calls the Gemini API to generate new complementary tracks.
@@ -576,8 +583,7 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
 
             pitch = max(0, min(127, pitch))
             velocity = max(0, min(127, velocity))
-            if duration_tick < 0:
-                duration_tick = 0
+            duration_tick = max(duration_tick, 0)
 
             if velocity == 0:
                  events.append({'type': 'note_off', 'tick': start_tick, 'pitch': pitch, 'velocity': 0})
@@ -595,8 +601,7 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
     last_event_tick = start_offset_ticks
     for event in events:
         delta_time = event['tick'] - last_event_tick
-        if delta_time < 0:
-             delta_time = 0
+        delta_time = max(delta_time, 0)
 
         midi_messages.append(mido.Message(
             event['type'],
@@ -728,7 +733,7 @@ def main():
     if not parse_result or parse_result[0] is None:
         sys.exit(1)
     
-    mvp_json_data, track_end_ticks = parse_result
+    mvp_json_data, _track_end_ticks = parse_result
     analysis_result_data = call_gemini_for_detailed_analysis(mvp_json_data, input_midi_path)
     if analysis_result_data:
         show_analysis_results("Gemini Detailed Analysis", analysis_result_data)

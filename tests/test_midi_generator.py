@@ -1,7 +1,8 @@
-import pytest
 import mido
+import pytest
 
-from midi_generator import note_name_to_midi, seconds_to_ticks
+from midi_generator import drum_name_to_midi, note_name_to_midi, seconds_to_ticks
+
 
 def test_note_name_to_midi_valid():
     assert note_name_to_midi("C4") == 60
@@ -18,6 +19,32 @@ def test_note_name_to_midi_invalid_format():
 def test_note_name_to_midi_invalid_note():
     with pytest.raises(ValueError):
         note_name_to_midi("H4") # H is not valid in English notation
+
+def test_drum_name_to_midi_exact_and_alias():
+    """Tests exact matches, Finnish/alternative aliases, case and whitespace handling."""
+    assert drum_name_to_midi("kick") == 36
+    assert drum_name_to_midi("bass drum") == 36
+    assert drum_name_to_midi("bassorumpu") == 36
+    assert drum_name_to_midi("  KICK  ") == 36
+    assert drum_name_to_midi("snare") == 38
+    assert drum_name_to_midi("virveli") == 38
+    assert drum_name_to_midi("closed hi-hat") == 42
+    assert drum_name_to_midi("closed hh") == 42
+    assert drum_name_to_midi("hi-hat (suljettu)") == 42
+    assert drum_name_to_midi("crash cymbal 1") == 49
+    assert drum_name_to_midi("cowbell") == 56
+
+def test_drum_name_to_midi_substring():
+    """Tests fallback substring matching when exact alias isn't matched."""
+    # Substring matching for phrases containing the instrument name
+    assert drum_name_to_midi("acoustic snare drum") == 38
+    assert drum_name_to_midi("electric snare sound") == 40
+    assert drum_name_to_midi("loud kick beat") == 36
+
+def test_drum_name_to_midi_fallback():
+    """Tests unknown instrument names falling back to default snare (38)."""
+    assert drum_name_to_midi("unknown_percussion") == 38
+    assert drum_name_to_midi("synthesizer") == 38
 
 def test_seconds_to_ticks():
     # 120 BPM = 2 beats per second. 480 ticks per beat.

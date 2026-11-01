@@ -6,9 +6,10 @@ Output files are saved to the 'songs/' subdirectory.
 """
 
 import os
-import song_data
+
 from midiutil import MIDIFile
 
+import song_data
 
 # Output directory for generated files
 OUTPUT_DIR = "songs"
@@ -121,11 +122,11 @@ def generate_tabs():
 
     lines = []
     lines.append("=" * 60)
-    lines.append(f"GUITAR TABS (Drop D Tuning)")
+    lines.append("GUITAR TABS (Drop D Tuning)")
     lines.append(f"Song: {song_data.FILENAME} | Tempo: {song_data.TEMPO} bpm")
     lines.append("=" * 60)
 
-    print(f"\n--- 2. GENERATING TABS (Drop D) ---")
+    print("\n--- 2. GENERATING TABS (Drop D) ---")
     print(f"   Song: {song_data.FILENAME} | Tempo: {song_data.TEMPO} bpm")
 
     # Find all tracks containing "Gtr" or "Lead"
@@ -201,7 +202,7 @@ def generate_tabs():
                 lines.append(tab_line)
                 print(f"   {tab_line}")
             lines.append("")
-            print("")
+            print()
 
     # Write tabs to file
     with open(output_path, "w") as f:
@@ -214,6 +215,6 @@ def generate_tabs():
 if __name__ == "__main__":
     midi_path = generate_midi()
     tabs_path = generate_tabs()
-    print(f"\n--- STUDIO SESSION COMPLETE ---")
+    print("\n--- STUDIO SESSION COMPLETE ---")
     print(f"   MIDI: {midi_path}")
     print(f"   Tabs: {tabs_path}")

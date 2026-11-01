@@ -1,9 +1,17 @@
 import os
-import subprocess
 import platform
-from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, message_dialog, checkboxlist_dialog, button_dialog
-from prompt_toolkit.validation import Validator, ValidationError
+import subprocess
+
 from prompt_toolkit.completion import PathCompleter
+from prompt_toolkit.shortcuts import (
+    button_dialog,
+    checkboxlist_dialog,
+    input_dialog,
+    message_dialog,
+    radiolist_dialog,
+)
+from prompt_toolkit.validation import ValidationError, Validator
+
 
 class NumberValidator(Validator):
     """Validates that input is a positive integer."""

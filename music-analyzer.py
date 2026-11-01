@@ -1,14 +1,16 @@
-from google import genai
+import argparse
+import hashlib
+import itertools
+import json
 import os
 import re
-import time
 import sys
-import json
-import hashlib
 import threading
-import itertools
-import argparse
+import time
+
 from dotenv import load_dotenv
+from google import genai
+
 import midi_generator
 from tui import open_file_folder
 
@@ -17,7 +19,7 @@ load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
     print("Virhe: Gemini API -avainta ei löytynyt. Aseta se GEMINI_API_KEY ympäristömuuttujaan tai .env-tiedostoon.")
-    exit()
+    sys.exit()
 
 # Initialize Client
 client = genai.Client(api_key=API_KEY)
@@ -213,7 +215,7 @@ if __name__ == "__main__":
     audio_file_path = args.audio_file
     if not os.path.exists(audio_file_path):
         print(f"Virhe: Tiedostoa ei löytynyt: {audio_file_path}")
-        exit()
+        sys.exit()
 
     parsed_data = None
     cache_filepath = get_cache_filepath(audio_file_path)
@@ -229,7 +231,7 @@ if __name__ == "__main__":
         uploaded_file = upload_audio_file(audio_file_path)
         if not uploaded_file:
             print("Lataus epäonnistui.")
-            exit()
+            sys.exit()
 
         prompt_content = build_prompt(uploaded_file.uri)
         print(f"\nLähetetään pyyntö mallilla {MODEL_NAME}...")
@@ -265,7 +267,7 @@ if __name__ == "__main__":
             print(f"Virhe API-kutsussa: {e}")
             import traceback
             traceback.print_exc()
-            exit()
+            sys.exit()
         finally:
             if api_spinner._running:
                 api_spinner.stop()

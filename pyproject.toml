@@ -19,3 +19,10 @@ dev = [
     "pytest-cov>=7.0.0",
     "ruff>=0.14.10",
 ]
+
+[tool.ruff.lint]
+ignore = [
+    "BLE001",  # Do not catch blind exception: `Exception`
+    "S110",    # `try`-`except`-`pass` detected
+    "S112",    # `try`-`except`-`continue` detected
+]
