@@ -3,13 +3,19 @@ import pytest
 
 from midi_generator import drum_name_to_midi, note_name_to_midi, seconds_to_ticks
 
+
 def test_note_name_to_midi_valid():
     assert note_name_to_midi("C4") == 60
     assert note_name_to_midi("A4") == 69
     assert note_name_to_midi("C#4") == 61
     assert note_name_to_midi("Db4") == 61
+    assert note_name_to_midi("c4") == 60
+    assert note_name_to_midi("bb3") == 58
     assert note_name_to_midi("C-1") == 0
     assert note_name_to_midi("G9") == 127
+    # Note boundary clipping
+    assert note_name_to_midi("C-2") == 0
+    assert note_name_to_midi("G10") == 127
 
 def test_note_name_to_midi_invalid_format():
     with pytest.raises(ValueError):
@@ -18,6 +24,21 @@ def test_note_name_to_midi_invalid_format():
 def test_note_name_to_midi_invalid_note():
     with pytest.raises(ValueError):
         note_name_to_midi("H4") # H is not valid in English notation
+
+def test_note_name_to_midi_lru_cache():
+    """Verifies that note_name_to_midi utilizes its lru_cache."""
+    note_name_to_midi.cache_clear()
+    info_before = note_name_to_midi.cache_info()
+    assert info_before.hits == 0
+
+    # First call - cache miss
+    res1 = note_name_to_midi("D4")
+    # Second call - cache hit
+    res2 = note_name_to_midi("D4")
+    assert res1 == res2 == 62
+
+    info_after = note_name_to_midi.cache_info()
+    assert info_after.hits >= 1
 
 def test_drum_name_to_midi_exact_and_alias():
     """Tests exact matches, Finnish/alternative aliases, case and whitespace handling."""
