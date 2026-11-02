@@ -270,6 +270,26 @@ def test_humanize_mido_events():
         assert m.time >= 0
 
 
+def test_song_data_note_conversion():
+    """Tests the note() helper function in song_data and song_sources."""
+    import song_data
+    from song_sources import example_song
+
+    for mod in (song_data, example_song):
+        # Middle C (C4) -> MIDI 60
+        assert mod.note("C", 4) == 60
+        # Octave variations
+        assert mod.note("C", -1) == 0
+        assert mod.note("G", 9) == 127
+        # Semitones
+        assert mod.note("C#", 4) == 61
+        assert mod.note("A", 4) == 69
+        assert mod.note("B", 4) == 71
+        # Invalid / unknown notes fall back to 0
+        assert mod.note("H", 4) == 0
+        assert mod.note("Invalid", 2) == 0
+
+
 def test_analyzer_import_without_api_key(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setattr("dotenv.load_dotenv", lambda: None)
