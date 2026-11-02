@@ -1,19 +1,31 @@
-import mido
-import sys
-import json
-import os
 import argparse
-from google import genai
-from dotenv import load_dotenv
-import re
 import hashlib
+import json
+import logging
+import os
 import random
+import re
+import sys
+
+import mido
+from dotenv import load_dotenv
+from google import genai
+
 from tui import (
-    get_user_input, select_input_file, show_error, show_success_with_action,
-    show_analysis_results, ask_refine_or_save, get_refinement_feedback,
-    show_main_menu, get_song_generation_config, show_generation_preview, show_success,
-    select_song_source
+    ask_refine_or_save,
+    get_refinement_feedback,
+    get_song_generation_config,
+    get_user_input,
+    select_input_file,
+    select_song_source,
+    show_analysis_results,
+    show_error,
+    show_generation_preview,
+    show_main_menu,
+    show_success_with_action,
 )
+
+logger = logging.getLogger(__name__)
 
 # Default values if not found in MIDI
 DEFAULT_TEMPO = 500000  # 120 bpm
@@ -89,17 +101,16 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
 
             if msg.type == 'note_on' and msg.velocity > 0:
                 active_notes[msg.note] = (current_time_ticks, msg.velocity)
-            elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-                if msg.note in active_notes:
-                    start_tick, velocity = active_notes.pop(msg.note)
-                    duration_tick = current_time_ticks - start_tick
-                    if duration_tick >= 0:
-                        notes.append({
-                            "pitch": msg.note,
-                            "start_tick": start_tick,
-                            "duration_tick": duration_tick,
-                            "velocity": velocity
-                        })
+            elif (msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0)) and msg.note in active_notes:
+                start_tick, velocity = active_notes.pop(msg.note)
+                duration_tick = current_time_ticks - start_tick
+                if duration_tick >= 0:
+                    notes.append({
+                        "pitch": msg.note,
+                        "start_tick": start_tick,
+                        "duration_tick": duration_tick,
+                        "velocity": velocity
+                    })
 
         all_tracks_data.append({
             "instrument_program": first_program_change if found_program_change else 0,
@@ -130,17 +141,16 @@ def parse_midi_to_mvp_json(midi_file: mido.MidiFile):
 
                 if msg.type == 'note_on' and msg.velocity > 0:
                     active_notes[msg.note] = (current_time_ticks, msg.velocity)
-                elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-                    if msg.note in active_notes:
-                        start_tick, velocity = active_notes.pop(msg.note)
-                        duration_tick = current_time_ticks - start_tick
-                        if duration_tick >= 0:
-                            notes.append({
-                                "pitch": msg.note,
-                                "start_tick": start_tick,
-                                "duration_tick": duration_tick,
-                                "velocity": velocity
-                            })
+                elif (msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0)) and msg.note in active_notes:
+                    start_tick, velocity = active_notes.pop(msg.note)
+                    duration_tick = current_time_ticks - start_tick
+                    if duration_tick >= 0:
+                        notes.append({
+                            "pitch": msg.note,
+                            "start_tick": start_tick,
+                            "duration_tick": duration_tick,
+                            "velocity": velocity
+                        })
 
             all_tracks_data.append({
                 "instrument_program": first_program_change if found_program_change else 0,
@@ -186,6 +196,7 @@ def get_cache_filepath(input_midi_path: str) -> str:
         os.makedirs(CACHE_DIR, exist_ok=True)
         return os.path.join(CACHE_DIR, f"{file_hash}.json")
     except Exception as e:
+        logger.exception("get_cache_filepath failed")
         print(f"Warning: Could not generate cache key for {input_midi_path}: {e}", file=sys.stderr)
         return None
 
@@ -203,6 +214,7 @@ def load_analysis_from_cache(cache_filepath: str) -> dict | None:
         print(f"Warning: Invalid JSON in cache file: {cache_filepath}. Ignoring cache.", file=sys.stderr)
         return None
     except Exception as e:
+        logger.exception("load_analysis_from_cache failed")
         print(f"Warning: Could not load from cache file {cache_filepath}: {e}", file=sys.stderr)
         return None
 
@@ -215,6 +227,7 @@ def save_analysis_to_cache(cache_filepath: str, analysis_data: dict):
             json.dump(analysis_data, f, indent=2)
         print(f"Saved analysis to cache: {cache_filepath}")
     except Exception as e:
+        logger.exception("save_analysis_to_cache failed")
         print(f"Warning: Could not save to cache file {cache_filepath}: {e}", file=sys.stderr)
 
 def call_gemini_for_detailed_analysis(mvp_json_data: dict, input_midi_path: str):
@@ -322,12 +335,13 @@ Analysis JSON:
             return None
 
     except Exception as e:
+        logger.exception("call_gemini_for_detailed_analysis failed")
         error_msg = f"Unexpected error during detailed Gemini analysis: {e}"
         print(error_msg, file=sys.stderr)
         show_error("Analysis Error", error_msg)
         return None
 
-def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_indices: list[int], style_variation: str = "", sections: list = None, feedback: str = "", previous_response: str = ""):
+def call_gemini_for_extension(mvp_json_data: dict, bars_to_extend: int, target_track_indices: list[int], style_variation: str = "", sections: list | None = None, feedback: str = "", previous_response: str = ""):
     """
     Constructs a prompt and calls the Gemini API to generate extended notes
     for the specified target tracks, using all tracks as context.
@@ -427,12 +441,13 @@ Generated Notes JSON:
         return response.text
 
     except Exception as e:
+        logger.exception("call_gemini_for_extension failed")
         error_msg = f"Unexpected error calling Gemini API for extension: {e}"
         print(error_msg, file=sys.stderr)
         show_error("Gemini Error", error_msg)
         return None
 
-def call_gemini_for_complement(mvp_json_data: dict, complement_type: str, style_variation: str = "", instrument_hint: int = None, feedback: str = "", previous_response: str = ""):
+def call_gemini_for_complement(mvp_json_data: dict, complement_type: str, style_variation: str = "", instrument_hint: int | None = None, feedback: str = "", previous_response: str = ""):
     """
     (Post-MVP)
     Constructs a prompt and calls the Gemini API to generate new complementary tracks.
@@ -530,6 +545,7 @@ Generated Notes JSON:
         return response.text
 
     except Exception as e:
+        logger.exception("call_gemini_for_complement failed")
         error_msg = f"Unexpected error calling Gemini API for complement: {e}"
         print(error_msg, file=sys.stderr)
         show_error("Gemini Error", error_msg)
@@ -556,6 +572,7 @@ def parse_gemini_response(json_text: str):
         print(f"Successfully parsed JSON data from Gemini response (Type: {type(parsed_data)}).")
         return parsed_data
     except Exception as e:
+        logger.exception("parse_gemini_response failed")
         print(f"Error parsing Gemini response: {e}", file=sys.stderr)
         show_error("JSON Parsing Error", f"Failed to parse Gemini's response.\nDetails: {e}")
         return None
@@ -576,8 +593,7 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
 
             pitch = max(0, min(127, pitch))
             velocity = max(0, min(127, velocity))
-            if duration_tick < 0:
-                duration_tick = 0
+            duration_tick = max(duration_tick, 0)
 
             if velocity == 0:
                  events.append({'type': 'note_off', 'tick': start_tick, 'pitch': pitch, 'velocity': 0})
@@ -586,6 +602,7 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
                 events.append({'type': 'note_off', 'tick': end_tick, 'pitch': pitch, 'velocity': 0})
 
         except Exception as e:
+            logger.exception("generated_notes_to_midi_events failed")
             print(f"Warning: Skipping note due to error {e}: {note}", file=sys.stderr)
             continue
 
@@ -595,8 +612,7 @@ def generated_notes_to_midi_events(generated_notes: list, start_offset_ticks: in
     last_event_tick = start_offset_ticks
     for event in events:
         delta_time = event['tick'] - last_event_tick
-        if delta_time < 0:
-             delta_time = 0
+        delta_time = max(delta_time, 0)
 
         midi_messages.append(mido.Message(
             event['type'],
@@ -655,6 +671,7 @@ def main():
             song_data = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(song_data)
         except Exception as e:
+            logger.exception("main failed")
             show_error("Import Error", f"Could not load song source '{song_source_path}': {e}")
             sys.exit(1)
         
@@ -714,6 +731,7 @@ def main():
         num_logical_tracks = len(original_midi.tracks) if midi_type != 0 else 1
 
     except Exception as e:
+        logger.exception("main failed")
         print(f"Error loading MIDI: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -728,7 +746,7 @@ def main():
     if not parse_result or parse_result[0] is None:
         sys.exit(1)
     
-    mvp_json_data, track_end_ticks = parse_result
+    mvp_json_data, _track_end_ticks = parse_result
     analysis_result_data = call_gemini_for_detailed_analysis(mvp_json_data, input_midi_path)
     if analysis_result_data:
         show_analysis_results("Gemini Detailed Analysis", analysis_result_data)
@@ -777,7 +795,7 @@ def main():
                         try:
                             meta_track.append(mido.MetaMessage('key_signature', key=change.get("key"), time=0))
                         except Exception:
-                            pass
+                            logger.exception("main failed")
                     elif change.get("type") == "time_signature" and change.get("numerator") and change.get("denominator"):
                         meta_track.append(mido.MetaMessage('time_signature', numerator=change.get("numerator"), denominator=change.get("denominator"), time=0))
                 meta_track.append(mido.MetaMessage('end_of_track', time=0))
@@ -798,6 +816,7 @@ def main():
                         target_track.extend(events)
                         target_track.append(mido.MetaMessage('end_of_track', time=0))
                 except Exception:
+                    logger.exception("main failed")
                     continue
 
         elif mode == 'complement':
@@ -825,6 +844,7 @@ def main():
                 show_success_with_action("Success", f"Saved to {output_midi_path}", output_midi_path)
                 break
             except Exception as e:
+                logger.exception("main failed")
                 show_error("Save Error", str(e))
                 break
         elif action == 'refine':

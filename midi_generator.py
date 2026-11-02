@@ -1,3 +1,4 @@
+import logging
 import random
 import re
 import sys
@@ -30,6 +31,8 @@ _NOTE_REGEX = re.compile(r'([A-Ga-g][#b]?)(-?\d+)')
 
 # LRU cache avoids redundant regex parsing and math for repeated notes across tracks (~25x speedup).
 # There are only 128 standard MIDI pitches, so maxsize=256 easily captures the working set.
+logger = logging.getLogger(__name__)
+
 @lru_cache(maxsize=256)
 def note_name_to_midi(note_name):
     """Converts a note name (e.g., C4, F#5, C-1) to a MIDI number."""
@@ -125,7 +128,7 @@ def seconds_to_ticks(seconds, bpm, ticks_per_beat):
         ticks_per_beat = 480
 
     beats = (float(seconds) * float(bpm)) / 60.0
-    ticks = int(round(beats * float(ticks_per_beat)))
+    ticks = round(beats * float(ticks_per_beat))
     return ticks
 
 def humanize_notes(notes, velocity_range=10, timing_range=0.01):
@@ -160,6 +163,7 @@ def create_midi_file(data, output_filename="output.mid", humanize=False):
                 )
                 melody_instr.notes.append(note)
             except Exception as e:
+                logger.exception("create_midi_file failed")
                 print(f"ERROR: Failed to process melody note {n}: {e}", file=sys.stderr)
         
         if humanize:
@@ -179,6 +183,7 @@ def create_midi_file(data, output_filename="output.mid", humanize=False):
                 )
                 drum_instr.notes.append(note)
             except Exception as e:
+                logger.exception("create_midi_file failed")
                 print(f"ERROR: Failed to process drum hit {hit}: {e}", file=sys.stderr)
         
         if humanize:
@@ -214,6 +219,7 @@ def create_midi_file(data, output_filename="output.mid", humanize=False):
                 )
                 harmony_instr.notes.append(note)
             except Exception as e:
+                logger.exception("create_midi_file failed")
                 print(f"ERROR: Failed to process harmony note {n}: {e}", file=sys.stderr)
         
         if humanize:
@@ -244,7 +250,7 @@ def create_midi_file(data, output_filename="output.mid", humanize=False):
             for chord in chords:
                 # Convert seconds to ticks
                 beats = (chord['time'] * bpm) / 60.0
-                tick = int(round(beats * tpb))
+                tick = round(beats * tpb)
                 delta = max(0, tick - last_tick)
                 meta_track.append(mido.MetaMessage('marker', text=chord['name'], time=delta))
                 last_tick = tick

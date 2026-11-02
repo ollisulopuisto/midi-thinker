@@ -1,6 +1,6 @@
+import importlib.util
 import os
 import sys
-import importlib.util
 
 import mido
 import pytest
@@ -165,9 +165,9 @@ def test_parse_gemini_analysis_with_sections():
     assert len(parsed_data["sections"]) == 2
     assert parsed_data["sections"][1]["name"] == "Verse"
 
-def test_midi_cloning_for_refinement():
+def test_midi_cloning_for_refinement(type0_midi_path):
     """Verifies that we can clone a MidiFile to allow non-destructive refinement."""
-    test_midi_path = "tests/fixtures/test_midi_type0.mid"
+    test_midi_path = type0_midi_path
     original_mid = mido.MidiFile(test_midi_path)
     original_note_count = len([m for m in original_mid.tracks[0] if m.type == 'note_on'])
 
@@ -183,9 +183,9 @@ def test_midi_cloning_for_refinement():
 
 # --- Tests for imagine-music.py ---
 
-def test_parse_midi_to_mvp_json_type0():
+def test_parse_midi_to_mvp_json_type0(type0_midi_path):
     """Tests parsing of a simple Type 0 MIDI file."""
-    test_midi_path = "tests/fixtures/test_midi_type0.mid"
+    test_midi_path = type0_midi_path
     mid = mido.MidiFile(test_midi_path)
     
     json_data, track_end_ticks = imagine_music.parse_midi_to_mvp_json(mid)
@@ -268,3 +268,13 @@ def test_humanize_mido_events():
         if m.type == 'note_on':
             assert 80 <= m.velocity <= 100
         assert m.time >= 0
+
+
+def test_analyzer_import_without_api_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr("dotenv.load_dotenv", lambda: None)
+    module = import_module_from_path("analyzer_without_key", analyzer_path)
+    assert module.client is None
+    assert module.parse_gemini_response('{"tempo": 120}')["tempo"] == 120
+    with pytest.raises(ValueError, match="GEMINI_API_KEY"):
+        module.upload_audio_file("unused.wav")
