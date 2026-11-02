@@ -26,3 +26,10 @@
 -   [x] Perform detailed analysis via Gemini (key, tempo, time sig, style, harmony).
 -   [x] Display detailed analysis results to the user via TUI before generation.
 -   [/] Robust Error Handling (API errors, blocked prompts, parsing issues). *(Partially addressed)*
+
+## Automation repair - 2026-11-02
+
+- Reproduced failed run41400727193:51 Ruff findings. Addressed imports, redundant expressions, optional annotations and logged existing exception boundaries without disabling rules or removing recovery behavior.
+- The next gate also failed: importing music-analyzer without GEMINI_API_KEY exited during pytest collection. Keep offline helpers importable, while API upload and CLI analysis still require a key. Added a regression test.
+- Two existing tests referenced an ignored, untracked MIDI fixture. Generate its specified notes/meta messages in a temporary pytest fixture instead, retaining the existing assertions.
+- Verification: Python3.12, uv sync --dev, Ruff clean and22 tests pass locally. No live Gemini call or paid service used. A clean-checkout lint/test failure would disprove this repair; remote CI pending.

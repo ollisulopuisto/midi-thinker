@@ -1,9 +1,19 @@
+import logging
 import os
-import subprocess
 import platform
-from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, message_dialog, checkboxlist_dialog, button_dialog
-from prompt_toolkit.validation import Validator, ValidationError
+import subprocess
+
 from prompt_toolkit.completion import PathCompleter
+from prompt_toolkit.shortcuts import (
+    button_dialog,
+    checkboxlist_dialog,
+    input_dialog,
+    message_dialog,
+    radiolist_dialog,
+)
+from prompt_toolkit.validation import ValidationError, Validator
+
+logger = logging.getLogger(__name__)
 
 class NumberValidator(Validator):
     """Validates that input is a positive integer."""
@@ -190,7 +200,8 @@ def open_file_folder(file_path):
         try:
             subprocess.Popen(["xdg-open", folder])
         except Exception:
-            pass # Fallback if xdg-open not available
+            logger.exception("open_file_folder failed")
+            # Fallback if xdg-open not available
 
 def show_success_with_action(title, text, file_path):
     """Displays a success message and offers to open the containing folder."""
@@ -433,7 +444,8 @@ if __name__ == '__main__':
         except FileNotFoundError:
              print(f"Error: Test input file not found at '{test_input_path}'")
         except Exception as e:
-             print(f"Error loading test file: {e}")
+            logger.exception("show_analysis_results failed")
+            print(f"Error loading test file: {e}")
 
         # Example of showing analysis results
         print("\n--- Testing show_analysis_results ---")

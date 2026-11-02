@@ -1,26 +1,27 @@
-from google import genai
+import argparse
+import hashlib
+import itertools
+import json
+import logging
 import os
 import re
-import time
 import sys
-import json
-import hashlib
 import threading
-import itertools
-import argparse
+import time
+
 from dotenv import load_dotenv
+from google import genai
+
 import midi_generator
 from tui import open_file_folder
+
+logger = logging.getLogger(__name__)
 
 # --- Konfiguraatio ---
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    print("Virhe: Gemini API -avainta ei löytynyt. Aseta se GEMINI_API_KEY ympäristömuuttujaan tai .env-tiedostoon.")
-    exit()
-
-# Initialize Client
-client = genai.Client(api_key=API_KEY)
+# Parsing and cache helpers must remain importable without a paid API credential.
+client = genai.Client(api_key=API_KEY) if API_KEY else None
 
 # Updated to a known supported model for the new SDK if needed, or stick to the one requested.
 # The user's code had "gemini-2.5-pro-exp-03-25". I will keep it but be aware it might need checking.
@@ -77,6 +78,7 @@ def get_cache_filepath(audio_file_path: str) -> str | None:
         os.makedirs(CACHE_DIR, exist_ok=True)
         return os.path.join(CACHE_DIR, f"{file_hash}.json")
     except Exception as e:
+        logger.exception("get_cache_filepath failed")
         print(f"Varoitus: Ei voitu luoda cache-avainta tiedostolle {audio_file_path}: {e}", file=sys.stderr)
         return None
 
@@ -89,6 +91,7 @@ def load_from_cache(cache_filepath: str) -> dict | None:
         print(f"Ladattu analyysi välimuistista: {cache_filepath}")
         return cached_data
     except Exception as e:
+        logger.exception("load_from_cache failed")
         print(f"Varoitus: Ei voitu ladata cache-tiedostosta: {e}", file=sys.stderr)
         return None
 
@@ -100,12 +103,15 @@ def save_to_cache(cache_filepath: str, analysis_data: dict):
             json.dump(analysis_data, f, indent=2)
         print(f"Tallennettu analyysi välimuistiin: {cache_filepath}")
     except Exception as e:
+        logger.exception("save_to_cache failed")
         print(f"Varoitus: Ei voitu tallentaa cache-tiedostoon: {e}", file=sys.stderr)
 
 def upload_audio_file(file_path):
     print(f"Ladataan tiedostoa: {file_path}...")
     spinner = Spinner(f"Uploading {os.path.basename(file_path)}...")
     
+    if client is None:
+        raise ValueError("GEMINI_API_KEY is required for audio upload")
     try:
         spinner.start()
         # The new SDK handles large files automatically?
@@ -136,6 +142,7 @@ def upload_audio_file(file_path):
                 time.sleep(2)
                 
     except Exception as e:
+        logger.exception("upload_audio_file failed")
         spinner.stop()
         print(f"\nVirhe ladatessa tiedostoa: {e}", file=sys.stderr)
         return None
@@ -200,6 +207,7 @@ def parse_gemini_response(text):
         print("Gemini-vastauksen jäsentäminen (JSON) valmis.")
         return data
     except Exception as e:
+        logger.exception("parse_gemini_response failed")
         print(f"Virhe jäsennettäessä JSON-vastausta: {e}", file=sys.stderr)
         return None
 
@@ -210,10 +218,13 @@ if __name__ == "__main__":
     parser.add_argument("--open", action="store_true", help="Avaa kansio tallennuksen jälkeen")
     args = parser.parse_args()
 
+    if client is None:
+        parser.error("GEMINI_API_KEY is required for analysis")
+
     audio_file_path = args.audio_file
     if not os.path.exists(audio_file_path):
         print(f"Virhe: Tiedostoa ei löytynyt: {audio_file_path}")
-        exit()
+        sys.exit()
 
     parsed_data = None
     cache_filepath = get_cache_filepath(audio_file_path)
@@ -229,7 +240,7 @@ if __name__ == "__main__":
         uploaded_file = upload_audio_file(audio_file_path)
         if not uploaded_file:
             print("Lataus epäonnistui.")
-            exit()
+            sys.exit()
 
         prompt_content = build_prompt(uploaded_file.uri)
         print(f"\nLähetetään pyyntö mallilla {MODEL_NAME}...")
@@ -261,11 +272,12 @@ if __name__ == "__main__":
                 print("Tyhjä vastaus.")
                 
         except Exception as e:
+            logger.exception("parse_gemini_response failed")
             api_spinner.stop()
             print(f"Virhe API-kutsussa: {e}")
             import traceback
             traceback.print_exc()
-            exit()
+            sys.exit()
         finally:
             if api_spinner._running:
                 api_spinner.stop()
@@ -277,4 +289,5 @@ if __name__ == "__main__":
             if args.open:
                 open_file_folder(output_filename)
         except Exception:
-             print("MIDI-tiedoston luonti epäonnistui.", file=sys.stderr)
+            logger.exception("parse_gemini_response failed")
+            print("MIDI-tiedoston luonti epäonnistui.", file=sys.stderr)
