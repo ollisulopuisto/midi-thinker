@@ -298,3 +298,45 @@ def test_analyzer_import_without_api_key(monkeypatch):
     assert module.parse_gemini_response('{"tempo": 120}')["tempo"] == 120
     with pytest.raises(ValueError, match="GEMINI_API_KEY"):
         module.upload_audio_file("unused.wav")
+
+
+# --- Tests for studio.py ---
+
+
+def test_get_best_fret_drop_d():
+    """Tests fret and string selection logic for Drop D guitar tuning."""
+    import studio
+
+    # Pitch 38 is low D (Drop D 6th string, open)
+    res = studio.get_best_fret(38)
+    assert res == (6, 0)
+
+    # Pitch 45 is A (5th string open)
+    res = studio.get_best_fret(45)
+    assert res == (5, 0)
+
+    # Pitch 64 is high E (1st string open)
+    res = studio.get_best_fret(64)
+    assert res == (1, 0)
+
+    # Pitch out of guitar range returns None
+    assert studio.get_best_fret(20) is None
+    assert studio.get_best_fret(100) is None
+
+
+def test_get_best_fret_lru_cache():
+    """Verifies that get_best_fret utilizes its lru_cache."""
+    import studio
+
+    studio.get_best_fret.cache_clear()
+    info_before = studio.get_best_fret.cache_info()
+    assert info_before.hits == 0
+
+    # First call - cache miss
+    res1 = studio.get_best_fret(50, prev_string=None)
+    # Second call - cache hit
+    res2 = studio.get_best_fret(50, prev_string=None)
+    assert res1 == res2 == (4, 0)
+
+    info_after = studio.get_best_fret.cache_info()
+    assert info_after.hits >= 1
