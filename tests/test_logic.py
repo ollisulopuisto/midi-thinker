@@ -340,3 +340,24 @@ def test_get_best_fret_lru_cache():
 
     info_after = studio.get_best_fret.cache_info()
     assert info_after.hits >= 1
+
+
+def test_generate_midi_and_tabs_output(tmp_path, monkeypatch):
+    """Tests studio.generate_midi and studio.generate_tabs execution and file generation."""
+    import studio
+
+    monkeypatch.setattr(studio, "OUTPUT_DIR", str(tmp_path))
+    midi_path = studio.generate_midi()
+    assert os.path.exists(midi_path)
+    # Check that generated MIDI has tempo track + all configured tracks
+    generated_mid = mido.MidiFile(midi_path)
+    track_names = {t.name for t in generated_mid.tracks if t.name}
+    expected_names = {t["name"] for t in studio.song_data.TRACKS}
+    assert expected_names.issubset(track_names)
+
+    tabs_path = studio.generate_tabs()
+    assert os.path.exists(tabs_path)
+    with open(tabs_path, "r") as f:
+        content = f.read()
+    assert "GUITAR TABS (Drop D Tuning)" in content
+    assert "Manics Lead Gtr" in content
