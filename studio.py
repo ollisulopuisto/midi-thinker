@@ -43,14 +43,17 @@ def generate_midi():
         mid.addProgramChange(t["id"], t["channel"], 0, t["patch"])
 
     # 2. Process Arrangement
+    # Pre-index tracks by id for O(1) direct lookup, avoiding repeated O(T) generator scans per part
+    tracks_by_id = {t["id"]: t for t in song_data.TRACKS}
+
     for section in song_data.ARRANGEMENT:
         bar_offset = section["start_bar"] * 4
         print(f"   Processing Section: {section['name']}")
         mid.addText(0, bar_offset, section["name"])
 
         for part in section["parts"]:
-            # Find track info by ID
-            t_info = next(t for t in song_data.TRACKS if t["id"] == part["track_id"])
+            # Find track info by ID via O(1) hash table lookup
+            t_info = tracks_by_id[part["track_id"]]
 
             notes = []
 
@@ -143,10 +146,11 @@ def generate_tabs():
         print(f"\n   [{section['name']}]")
         total_beats = section["length_bars"] * 4
 
+        # Pre-index section parts by track_id for O(1) lookup across guitar tracks
+        parts_by_track = {p["track_id"]: p for p in section["parts"]}
+
         for t_info in gtr_tracks:
-            part = next(
-                (p for p in section["parts"] if p["track_id"] == t_info["id"]), None
-            )
+            part = parts_by_track.get(t_info["id"])
             if not part:
                 continue
 
