@@ -66,6 +66,21 @@ def test_drum_name_to_midi_fallback():
     assert drum_name_to_midi("unknown_percussion") == 38
     assert drum_name_to_midi("synthesizer") == 38
 
+def test_drum_name_to_midi_lru_cache():
+    """Verifies that drum_name_to_midi utilizes its lru_cache."""
+    drum_name_to_midi.cache_clear()
+    info_before = drum_name_to_midi.cache_info()
+    assert info_before.hits == 0
+
+    # First call - cache miss
+    res1 = drum_name_to_midi("electric snare sound")
+    # Second call - cache hit
+    res2 = drum_name_to_midi("electric snare sound")
+    assert res1 == res2 == 40
+
+    info_after = drum_name_to_midi.cache_info()
+    assert info_after.hits >= 1
+
 def test_seconds_to_ticks():
     # 120 BPM = 2 beats per second. 480 ticks per beat.
     # 1 second = 2 beats = 960 ticks.
