@@ -361,3 +361,48 @@ def test_generate_midi_and_tabs_output(tmp_path, monkeypatch):
         content = f.read()
     assert "GUITAR TABS (Drop D Tuning)" in content
     assert "Manics Lead Gtr" in content
+
+
+def test_parse_gemini_response_fast_path_and_code_blocks():
+    """Verifies that markdown code block regex extraction and fast path work identically for both modules."""
+    # 1. Plain unfenced JSON (triggers fast-path without regex matching)
+    plain_json = '{"tempo": 130, "key": "D Major", "melody": [{"note": "D4", "time": 0.0, "duration": 1.0}]}'
+    parsed_analyzer_plain = music_analyzer.parse_gemini_response(plain_json)
+    parsed_imagine_plain = imagine_music.parse_gemini_response(plain_json)
+    assert parsed_analyzer_plain is not None
+    assert parsed_analyzer_plain["tempo"] == 130
+    assert parsed_imagine_plain is not None
+    assert parsed_imagine_plain["tempo"] == 130
+
+    # 2. Markdown fenced code block with json tag
+    fenced_json = """
+    ```json
+    {
+      "tempo": 140,
+      "key": "E Minor",
+      "melody": [{"note": "E4", "time": 0.0, "duration": 0.5}]
+    }
+    ```
+    """
+    parsed_analyzer_fenced = music_analyzer.parse_gemini_response(fenced_json)
+    parsed_imagine_fenced = imagine_music.parse_gemini_response(fenced_json)
+    assert parsed_analyzer_fenced is not None
+    assert parsed_analyzer_fenced["tempo"] == 140
+    assert parsed_imagine_fenced is not None
+    assert parsed_imagine_fenced["tempo"] == 140
+
+    # 3. Markdown fenced code block without json tag
+    generic_fenced = """
+    ```
+    {
+      "tempo": 150,
+      "key": "F Major"
+    }
+    ```
+    """
+    parsed_analyzer_generic = music_analyzer.parse_gemini_response(generic_fenced)
+    parsed_imagine_generic = imagine_music.parse_gemini_response(generic_fenced)
+    assert parsed_analyzer_generic is not None
+    assert parsed_analyzer_generic["tempo"] == 150
+    assert parsed_imagine_generic is not None
+    assert parsed_imagine_generic["tempo"] == 150
