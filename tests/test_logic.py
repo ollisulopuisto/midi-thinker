@@ -406,3 +406,24 @@ def test_parse_gemini_response_fast_path_and_code_blocks():
     assert parsed_analyzer_generic["tempo"] == 150
     assert parsed_imagine_generic is not None
     assert parsed_imagine_generic["tempo"] == 150
+
+
+def test_get_cache_filepath_hashlib_digest(tmp_path):
+    """Verifies that get_cache_filepath correctly computes cache keys matching expected sha256."""
+    import hashlib
+
+    dummy_file = tmp_path / "audio_sample.wav"
+    dummy_bytes = b"RIFF....WAVEfmt test audio byte stream 1234567890" * 100
+    dummy_file.write_bytes(dummy_bytes)
+
+    expected_hash = hashlib.sha256(dummy_bytes).hexdigest()
+
+    im_cache_path = imagine_music.get_cache_filepath(str(dummy_file))
+    ma_cache_path = music_analyzer.get_cache_filepath(str(dummy_file))
+
+    assert im_cache_path == os.path.join(imagine_music.CACHE_DIR, f"{expected_hash}.json")
+    assert ma_cache_path == os.path.join(music_analyzer.CACHE_DIR, f"{expected_hash}.json")
+
+    # Non-existent file error handling
+    assert imagine_music.get_cache_filepath("/nonexistent/path/file.mid") is None
+    assert music_analyzer.get_cache_filepath("/nonexistent/path/file.wav") is None
