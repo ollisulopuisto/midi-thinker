@@ -253,6 +253,45 @@ def test_generated_notes_to_midi_events():
     assert events[2].type == 'note_on'
     assert events[2].note == 62
     assert events[2].time == 0 # Should start immediately after prev note off at tick 1480
+
+
+def test_generated_notes_to_midi_events_edge_cases():
+    """Tests generated_notes_to_midi_events handling zero velocity, clamping, and sorting order."""
+    generated_notes = [
+        # Zero velocity note (treated as note_off directly)
+        {"pitch": 64, "start_tick": 100, "duration_tick": 200, "velocity": 0},
+        # Out-of-bound pitch and velocity clamping
+        {"pitch": -10, "start_tick": 200, "duration_tick": -50, "velocity": 200},
+        # High boundary pitch
+        {"pitch": 150, "start_tick": 300, "duration_tick": 100, "velocity": 127},
+        # Invalid note format to ensure resilient skipping
+        {"pitch": "invalid", "start_tick": 400, "duration_tick": 100, "velocity": 80},
+    ]
+    start_offset = 0
+    events = imagine_music.generated_notes_to_midi_events(generated_notes, start_offset)
+
+    # Note 1 (vel 0): 1 note_off at 100
+    # Note 2: pitch clamped to 0, dur clamped to 0 -> note_on at 200 (vel 127), note_off at 200 (vel 0)
+    # Note 3: pitch clamped to 127 -> note_on at 300, note_off at 400
+    # Note 4: skipped due to ValueError
+    # Total messages: 1 + 2 + 2 = 5
+    assert len(events) == 5
+
+    # Check zero velocity event
+    assert events[0].type == "note_off"
+    assert events[0].note == 64
+    assert events[0].velocity == 0
+    assert events[0].time == 100
+
+    # At tick 200: note_off should sort before note_on at same tick
+    assert events[1].type == "note_off"
+    assert events[1].note == 0
+    assert events[1].time == 100  # 200 - 100 = 100 delta
+
+    assert events[2].type == "note_on"
+    assert events[2].note == 0
+    assert events[2].velocity == 127
+    assert events[2].time == 0
     
 def test_humanize_mido_events():
     """Tests the humanization logic for subtle variations."""
