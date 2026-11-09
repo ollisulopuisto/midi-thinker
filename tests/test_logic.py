@@ -231,6 +231,39 @@ def test_parse_midi_to_mvp_json_type0(type0_midi_path):
     assert len(track_end_ticks) == 1
     assert track_end_ticks[0] == 1920
 
+
+def test_parse_midi_to_mvp_json_type1():
+    """Tests parsing of a Type 1 multi-track MIDI file."""
+    sample_file = os.path.join(project_root, "samples", "sample_composition.mid")
+    mid = mido.MidiFile(sample_file)
+    assert mid.type == 1
+
+    json_data, track_end_ticks = imagine_music.parse_midi_to_mvp_json(mid)
+
+    assert json_data is not None
+    assert track_end_ticks is not None
+    assert len(json_data["tracks"]) == len(mid.tracks)
+    assert len(track_end_ticks) == len(mid.tracks)
+    assert json_data["tempo"] == 500000
+    assert json_data["time_signature"]["numerator"] == 4
+    assert json_data["time_signature"]["denominator"] == 4
+    assert json_data["ticks_per_beat"] == mid.ticks_per_beat
+    assert len(json_data["meta_changes"]) > 0
+
+    # Ensure notes were extracted from tracks
+    total_notes = sum(len(t["notes"]) for t in json_data["tracks"])
+    assert total_notes > 0
+
+
+def test_parse_midi_to_mvp_json_empty_tracks():
+    """Tests handling of empty MIDI file with no tracks."""
+    empty_mid = mido.MidiFile(type=0)
+    empty_mid.tracks = []
+    res_data, res_ticks = imagine_music.parse_midi_to_mvp_json(empty_mid)
+    assert res_data is None
+    assert res_ticks is None
+
+
 def test_generated_notes_to_midi_events():
     """Tests conversion of Gemini's JSON notes to mido messages."""
     generated_notes = [
