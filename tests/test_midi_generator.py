@@ -108,3 +108,33 @@ def test_create_midi_file(tmp_path):
     mid = mido.MidiFile(str(output_file))
     assert len(mid.tracks) > 0
 
+
+def test_create_midi_file_chords_in_memory(tmp_path):
+    """Verifies that create_midi_file with chords correctly produces chord markers via in-memory handoff."""
+    from midi_generator import create_midi_file
+
+    data = {
+        "tempo": 120,
+        "key": "G Major",
+        "chords": [
+            {"time": 0.0, "name": "Gmaj"},
+            {"time": 1.0, "name": "Cmaj"},
+            {"time": 2.0, "name": "D7"},
+        ],
+        "melody": [{"time": 0.0, "note": "G4", "duration": 1.0}],
+    }
+
+    output_file = tmp_path / "test_chords.mid"
+    create_midi_file(data, output_filename=str(output_file), humanize=False)
+
+    assert output_file.exists()
+    mid = mido.MidiFile(str(output_file))
+    assert len(mid.tracks) >= 2
+
+    # Verify chord markers meta track
+    meta_track = mid.tracks[0]
+    track_names = [msg.name for msg in meta_track if msg.type == "track_name"]
+    assert "Chord Markers" in track_names
+
+    markers = [msg.text for msg in meta_track if msg.type == "marker"]
+    assert markers == ["Gmaj", "Cmaj", "D7"]
