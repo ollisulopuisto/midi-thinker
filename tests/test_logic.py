@@ -325,6 +325,29 @@ def test_generated_notes_to_midi_events_edge_cases():
     assert events[2].note == 0
     assert events[2].velocity == 127
     assert events[2].time == 0
+
+
+def test_generated_notes_to_midi_events_skip_checks_equivalence():
+    """Verifies that generated_notes_to_midi_events produces identical messages to standard mido.Message."""
+    generated_notes = [
+        {"pitch": 60 + (i % 24), "start_tick": i * 20, "duration_tick": 40, "velocity": 85}
+        for i in range(50)
+    ]
+    start_offset = 240
+    events = imagine_music.generated_notes_to_midi_events(generated_notes, start_offset)
+    assert len(events) == 100  # 50 note_on + 50 note_off
+
+    # Compare against messages constructed without skip_checks
+    for msg in events:
+        expected = mido.Message(
+            msg.type,
+            note=msg.note,
+            velocity=msg.velocity,
+            time=msg.time
+        )
+        assert msg == expected
+        assert msg.bytes() == expected.bytes()
+        assert msg.dict() == expected.dict()
     
 def test_humanize_mido_events():
     """Tests the humanization logic for subtle variations."""
