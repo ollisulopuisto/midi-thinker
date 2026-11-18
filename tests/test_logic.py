@@ -458,6 +458,25 @@ def test_generate_midi_and_tabs_output(tmp_path, monkeypatch):
     assert "Manics Lead Gtr" in content
 
 
+def test_get_output_path_confines_filename_to_output_dir(tmp_path, monkeypatch):
+    """SECURITY: a caller-supplied filename must not escape OUTPUT_DIR (path traversal)."""
+    import studio
+
+    monkeypatch.setattr(studio, "OUTPUT_DIR", str(tmp_path))
+
+    # Any directory components in the filename must be reduced to the final
+    # component so the result stays inside OUTPUT_DIR.
+    for filename in ("../../escaped.mid", "/tmp/abs_escape.mid", "a/b.mid", "sub/../x.mid"):
+        result = studio.get_output_path(filename)
+        assert os.path.dirname(result) == str(tmp_path)
+        assert os.path.basename(result) == os.path.basename(filename)
+
+    # Dot entries and empty names cannot be used as the output file.
+    for filename in ("", ".", "..", "foo/.."):
+        with pytest.raises(ValueError):
+            studio.get_output_path(filename)
+
+
 def test_parse_gemini_response_fast_path_and_code_blocks():
     """Verifies that markdown code block regex extraction and fast path work identically for both modules."""
     # 1. Plain unfenced JSON (triggers fast-path without regex matching)

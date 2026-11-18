@@ -22,8 +22,14 @@ def ensure_output_dir():
 
 
 def get_output_path(filename):
-    """Returns the full path for an output file."""
+    """Returns the full path for an output file, confined to OUTPUT_DIR."""
     ensure_output_dir()
+    # SECURITY (path traversal): the filename can come from user input or a
+    # song source module, so keep the result inside OUTPUT_DIR by using only
+    # the final path component and rejecting dot entries.
+    filename = os.path.basename(filename)
+    if filename in ("", ".", ".."):
+        raise ValueError("Output filename must be a plain file name")
     return os.path.join(OUTPUT_DIR, filename)
 
 
