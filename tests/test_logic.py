@@ -255,6 +255,28 @@ def test_parse_midi_to_mvp_json_type1():
     assert total_notes > 0
 
 
+def test_parse_midi_to_mvp_json_velocity_zero_and_unmatched_offs():
+    """Note events use a fast path; check implicit note-offs and stray note-offs."""
+    mid = mido.MidiFile(type=1)
+    track = mido.MidiTrack()
+    track.extend([
+        mido.Message("note_on", note=60, velocity=80, time=0),
+        mido.Message("note_on", note=60, velocity=0, time=10),  # implicit note off
+        mido.Message("note_off", note=62, velocity=0, time=5),  # no matching note on
+        mido.Message("note_on", note=64, velocity=90, time=0),
+        mido.Message("note_off", note=64, velocity=0, time=20),
+    ])
+    mid.tracks.append(track)
+
+    json_data, _ = imagine_music.parse_midi_to_mvp_json(mid)
+
+    notes = json_data["tracks"][0]["notes"]
+    assert [
+        (n["pitch"], n["start_tick"], n["duration_tick"], n["velocity"])
+        for n in notes
+    ] == [(60, 0, 10, 80), (64, 15, 20, 90)]
+
+
 def test_parse_midi_to_mvp_json_empty_tracks():
     """Tests handling of empty MIDI file with no tracks."""
     empty_mid = mido.MidiFile(type=0)
