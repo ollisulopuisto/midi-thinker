@@ -138,3 +138,38 @@ def test_create_midi_file_chords_in_memory(tmp_path):
 
     markers = [msg.text for msg in meta_track if msg.type == "marker"]
     assert markers == ["Gmaj", "Cmaj", "D7"]
+
+
+def test_create_midi_file_chord_marker_timing(tmp_path):
+    """Chord markers must land on the right ticks and leave note tracks untouched."""
+    from midi_generator import create_midi_file
+
+    data = {
+        "tempo": 120,
+        "chords": [
+            {"time": 0.0, "name": "Am"},
+            {"time": 1.0, "name": "F"},
+            {"time": 2.5, "name": "C"},
+        ],
+        "melody": [{"time": 0.0, "note": "C4", "duration": 0.5}],
+    }
+    chords_path = tmp_path / "with_chords.mid"
+    create_midi_file(data, output_filename=str(chords_path), humanize=False)
+
+    note_data = {key: value for key, value in data.items() if key != "chords"}
+    notes_path = tmp_path / "without_chords.mid"
+    create_midi_file(note_data, output_filename=str(notes_path), humanize=False)
+
+    mid = mido.MidiFile(str(chords_path))
+    ref = mido.MidiFile(str(notes_path))
+    assert len(mid.tracks) == len(ref.tracks) + 1
+
+    ticks = []
+    tick = 0
+    for msg in mid.tracks[0]:
+        tick += msg.time
+        if msg.type == "marker":
+            ticks.append(tick)
+    expected = [round(c["time"] * data["tempo"] / 60.0 * mid.ticks_per_beat) for c in data["chords"]]
+    assert ticks == expected
+    assert [list(track) for track in mid.tracks[1:]] == [list(track) for track in ref.tracks]
